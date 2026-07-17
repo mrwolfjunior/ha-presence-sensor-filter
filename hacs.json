@@ -1,6 +1,5 @@
 {
   "name": "TS0601 Advanced Presence Filter",
   "render_readme": true,
-  "iot_class": "local_push",
-  "hacs": "1.30.0"
+  "iot_class": "local_push"
 }

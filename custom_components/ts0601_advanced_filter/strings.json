@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure TS0601 Advanced Presence Filter",
+        "description": "Select the source entities to filter and configure spatial parameters.",
+        "data": {
+          "source_presence": "Source Presence Sensor",
+          "source_distance": "Source Target Distance Sensor",
+          "room_mode": "Room Mode",
+          "entry_zones": "Entry Zones (comma separated ranges, e.g. 0.0-1.5, 4.0-5.0)",
+          "buffer_time": "Buffer Time (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "room_mode": "Room Mode",
+          "entry_zones": "Entry Zones",
+          "buffer_time": "Buffer Time (seconds)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "room_mode": {
+      "options": {
+        "passage": "Passage (Detect Everything)",
+        "perimeter": "Perimeter (Wasp-in-a-Box)"
+      }
+    }
+  }
+}

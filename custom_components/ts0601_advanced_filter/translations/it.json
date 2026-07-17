@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configura il Filtro Presenza TS0601 Avanzato",
+        "description": "Seleziona le entità sorgente da filtrare e configura i parametri spaziali.",
+        "data": {
+          "source_presence": "Sensore di Presenza Sorgente",
+          "source_distance": "Sensore Distanza Target Sorgente",
+          "room_mode": "Modalità Stanza",
+          "entry_zones": "Zone di Ingresso (range separati da virgola, es. 0.0-1.5, 4.0-5.0)",
+          "buffer_time": "Tempo di Buffer (secondi)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi",
+      "invalid_auth": "Autenticazione non valida",
+      "unknown": "Errore inaspettato"
+    },
+    "abort": {
+      "already_configured": "Il dispositivo è già configurato"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "room_mode": "Modalità Stanza",
+          "entry_zones": "Zone di Ingresso",
+          "buffer_time": "Tempo di Buffer (secondi)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "room_mode": {
+      "options": {
+        "passage": "Passaggio (Rileva Tutto)",
+        "perimeter": "Perimetrale (Wasp-in-a-Box)"
+      }
+    }
+  }
+}

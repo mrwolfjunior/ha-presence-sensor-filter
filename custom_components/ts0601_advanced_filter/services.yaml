@@ -1,0 +1,12 @@
+mark_false_positive:
+  name: Segna Falso Positivo (Training)
+  description: Registra la distanza attuale del sensore come zona d'ombra permanente per prevenire futuri falsi allarmi in quel punto esatto.
+  fields:
+    entity_id:
+      name: Entità Sensore Filtrato
+      description: Il binary_sensor filtrato da addestrare.
+      required: true
+      selector:
+        entity:
+          integration: ts0601_advanced_filter
+          domain: binary_sensor

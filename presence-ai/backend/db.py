@@ -29,18 +29,67 @@ def init_db():
         )
     """)
     
-    # Table for sensor configuration (Calibration & Offset)
+    # Table for sensor configuration (Calibration & Offset & Enabled status)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sensors (
             sensor_id TEXT PRIMARY KEY,
             friendly_name TEXT,
             calibration_offset REAL DEFAULT 0.0,
-            room_id TEXT
+            room_id TEXT,
+            is_enabled BOOLEAN DEFAULT 0
         )
     """)
     
+    # Simple migration if the column doesn't exist
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN is_enabled BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # Column already exists
+
     conn.commit()
     conn.close()
+
+def get_all_sensors():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sensors")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def upsert_sensor(sensor_id: str, is_enabled: bool = False):
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Insert if not exists, do not overwrite is_enabled if already exists
+    cursor.execute("""
+        INSERT INTO sensors (sensor_id, is_enabled) 
+        VALUES (?, ?)
+        ON CONFLICT(sensor_id) DO NOTHING
+    """, (sensor_id, is_enabled))
+    conn.commit()
+    conn.close()
+
+def set_sensor_enabled(sensor_id: str, is_enabled: bool):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE sensors SET is_enabled = ? WHERE sensor_id = ?
+    """, (is_enabled, sensor_id))
+    # If it updated 0 rows, it means the sensor doesn't exist yet, insert it
+    if cursor.rowcount == 0:
+        cursor.execute("""
+            INSERT INTO sensors (sensor_id, is_enabled) VALUES (?, ?)
+        """, (sensor_id, is_enabled))
+    conn.commit()
+    conn.close()
+
+def is_sensor_enabled(sensor_id: str) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_enabled FROM sensors WHERE sensor_id = ?", (sensor_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row['is_enabled']) if row else False
 
 def insert_sensor_event(sensor_id: str, target_distance: float, presence: bool, payload: dict):
     conn = get_connection()

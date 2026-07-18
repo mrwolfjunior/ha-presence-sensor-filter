@@ -7,15 +7,19 @@ from fastapi.middleware.cors import CORSMiddleware
 import paho.mqtt.client as mqtt
 from collections import defaultdict, deque
 
-from db import init_db, insert_sensor_event
+from db import init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, get_all_sensors, set_sensor_enabled
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("presence_ai_backend")
 
 from contextlib import asynccontextmanager
 
+main_loop = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     # Startup
     init_db()
     try:
@@ -112,6 +116,26 @@ def on_message(client, userdata, msg):
             distance = payload.get("target_distance", 0.0)
             presence = payload.get("presence", False)
             
+            # Register sensor if new, do not overwrite settings
+            upsert_sensor(sensor_id, is_enabled=False)
+            
+            # Broadcast raw data for the settings UI, regardless of enabled status
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    broadcast_websocket({
+                        "type": "radar_update",
+                        "sensor_id": sensor_id,
+                        "distance": distance,
+                        "presence": presence,
+                        "ai_filtered_presence": presence # Raw for now
+                    }),
+                    main_loop
+                )
+            
+            # Only process ML and broadcast HA Discovery if enabled
+            if not is_sensor_enabled(sensor_id):
+                return
+            
             # Data Ingestion
             insert_sensor_event(sensor_id, distance, presence, payload)
             
@@ -124,17 +148,8 @@ def on_message(client, userdata, msg):
             state_topic = f"presence_ai/sensor/{sensor_id}/state"
             client.publish(state_topic, "ON" if is_valid_human else "OFF")
             
-            # Broadcast to UI
-            asyncio.run_coroutine_threadsafe(
-                broadcast_websocket({
-                    "type": "radar_update",
-                    "sensor_id": sensor_id,
-                    "distance": distance,
-                    "presence": presence,
-                    "ai_filtered_presence": is_valid_human
-                }),
-                asyncio.get_event_loop()
-            )
+            # Publish Discovery for enabled sensors
+            publish_discovery(sensor_id)
             
     except Exception as e:
         logger.error(f"Error processing MQTT message: {e}")
@@ -160,6 +175,20 @@ async def websocket_endpoint(websocket: WebSocket):
 async def start_calibration(sensor_id: str):
     # This triggers the "Walk-to-Calibrate" mode
     return {"status": "calibration_started", "sensor_id": sensor_id}
+
+@app.get("/api/sensors")
+async def get_sensors_list():
+    return get_all_sensors()
+
+from pydantic import BaseModel
+
+class SensorConfig(BaseModel):
+    is_enabled: bool
+
+@app.post("/api/sensors/{sensor_id}")
+async def update_sensor(sensor_id: str, config: SensorConfig):
+    set_sensor_enabled(sensor_id, config.is_enabled)
+    return {"status": "success"}
 
 if __name__ == "__main__":
     import uvicorn

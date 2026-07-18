@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+paho-mqtt
+pydantic
+scikit-learn
+pandas
+numpy
+sqlite3-api

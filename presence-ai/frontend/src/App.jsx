@@ -190,7 +190,6 @@ function App() {
                       {floors.map(f => <Tab key={f.id} value={f.id} label={f.name} />)}
                     </Tabs>
                     <Box>
-                      <Button variant="contained" color="secondary" onClick={handleSyncHA} sx={{ mr: 1 }}>Sync HA</Button>
                       <Button variant="outlined" onClick={() => setFloorDialogOpen(true)}>+ Piano</Button>
                     </Box>
                   </Box>
@@ -301,24 +300,38 @@ function App() {
 
           {/* TAB 1: SETTINGS */}
           {currentTab === 1 && (
-            <Card elevation={3} sx={{ maxWidth: 800, mx: 'auto' }}>
-              <CardContent>
-                <Typography variant="h5" gutterBottom>Gestione Sensori Scoperti</Typography>
-                <Typography variant="body2" color="text.secondary" paragraph>
-                  Abilita i sensori Zigbee2MQTT su cui vuoi applicare il filtro AI e piazzare nella Blueprint.
-                </Typography>
-                <List>
-                  {dbSensors.map((sensor) => (
-                    <ListItem key={sensor.sensor_id} divider>
-                      <ListItemText primary={sensor.friendly_name || sensor.sensor_id} />
-                      <ListItemSecondaryAction>
-                        <Switch edge="end" onChange={() => toggleSensor(sensor.sensor_id, sensor.is_enabled)} checked={sensor.is_enabled === 1 || sensor.is_enabled === true} />
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  ))}
-                </List>
-              </CardContent>
-            </Card>
+            <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+              <Card elevation={3} sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="h5" gutterBottom>Sincronizzazione Home Assistant</Typography>
+                  <Typography variant="body2" color="text.secondary" paragraph>
+                    Importa automaticamente la struttura della tua casa (Piani e Stanze) dal registro di Home Assistant. Le coordinate e dimensioni già configurate verranno mantenute.
+                  </Typography>
+                  <Button variant="contained" color="secondary" onClick={handleSyncHA} sx={{ mt: 1 }}>
+                    Sincronizza Ora
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card elevation={3}>
+                <CardContent>
+                  <Typography variant="h5" gutterBottom>Gestione Sensori Scoperti</Typography>
+                  <Typography variant="body2" color="text.secondary" paragraph>
+                    Abilita i sensori Zigbee2MQTT su cui vuoi applicare il filtro AI e piazzare nella Blueprint.
+                  </Typography>
+                  <List>
+                    {dbSensors.map((sensor) => (
+                      <ListItem key={sensor.sensor_id} divider>
+                        <ListItemText primary={sensor.friendly_name || sensor.sensor_id} />
+                        <ListItemSecondaryAction>
+                          <Switch edge="end" onChange={() => toggleSensor(sensor.sensor_id, sensor.is_enabled)} checked={sensor.is_enabled === 1 || sensor.is_enabled === true} />
+                        </ListItemSecondaryAction>
+                      </ListItem>
+                    ))}
+                  </List>
+                </CardContent>
+              </Card>
+            </Box>
           )}
 
         </Box>

@@ -7,9 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 import paho.mqtt.client as mqtt
 from collections import defaultdict, deque
 
-from db import init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, get_all_sensors, set_sensor_enabled
-
-logging.basicConfig(level=logging.INFO)
+from db import (
+    init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, 
+    get_all_sensors, set_sensor_enabled, update_sensor_config,
+    get_floors, upsert_floor, delete_floor,
+    get_rooms, upsert_room, delete_room
+)
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Optional
 logger = logging.getLogger("presence_ai_backend")
 
 from contextlib import asynccontextmanager
@@ -180,16 +186,72 @@ async def start_calibration(sensor_id: str):
 async def get_sensors_list():
     return get_all_sensors()
 
-from pydantic import BaseModel
-
 class SensorConfig(BaseModel):
-    is_enabled: bool
+    is_enabled: Optional[bool] = None
+    room_id: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
 
 @app.post("/api/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, config: SensorConfig):
-    set_sensor_enabled(sensor_id, config.is_enabled)
+    if config.is_enabled is not None:
+        set_sensor_enabled(sensor_id, config.is_enabled)
+    update_sensor_config(sensor_id, config.room_id, config.x, config.y)
     return {"status": "success"}
+
+# ---- Floors API ----
+class FloorConfig(BaseModel):
+    id: str
+    name: str
+    level: int
+
+@app.get("/api/floors")
+async def api_get_floors():
+    return get_floors()
+
+@app.post("/api/floors")
+async def api_upsert_floor(floor: FloorConfig):
+    upsert_floor(floor.id, floor.name, floor.level)
+    return {"status": "success"}
+
+@app.delete("/api/floors/{floor_id}")
+async def api_delete_floor(floor_id: str):
+    delete_floor(floor_id)
+    return {"status": "success"}
+
+# ---- Rooms API ----
+class RoomConfig(BaseModel):
+    id: str
+    name: str
+    floor_id: str
+    ha_area_id: str = ""
+    width: float = 4.0
+    height: float = 4.0
+    x: float = 0.0
+    y: float = 0.0
+
+@app.get("/api/rooms")
+async def api_get_rooms(floor_id: Optional[str] = None):
+    return get_rooms(floor_id)
+
+@app.post("/api/rooms")
+async def api_upsert_room(room: RoomConfig):
+    upsert_room(room.id, room.name, room.floor_id, room.ha_area_id, room.width, room.height, room.x, room.y)
+    return {"status": "success"}
+
+@app.delete("/api/rooms/{room_id}")
+async def api_delete_room(room_id: str):
+    delete_room(room_id)
+    return {"status": "success"}
+
+# Mount the static frontend
+# Assumes /frontend/dist exists (built by Vite)
+if os.path.exists("/frontend/dist"):
+    app.mount("/", StaticFiles(directory="/frontend/dist", html=True), name="frontend")
+else:
+    # For local development fallback
+    logger.warning("/frontend/dist not found, UI will not be served natively.")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8099)

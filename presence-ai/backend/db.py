@@ -40,12 +40,102 @@ def init_db():
         )
     """)
     
+    # Table for floors
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS floors (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            level INTEGER DEFAULT 0
+        )
+    """)
+
+    # Table for rooms
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rooms (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            floor_id TEXT,
+            ha_area_id TEXT,
+            width REAL DEFAULT 4.0,
+            height REAL DEFAULT 4.0,
+            x REAL DEFAULT 0.0,
+            y REAL DEFAULT 0.0,
+            FOREIGN KEY (floor_id) REFERENCES floors(id)
+        )
+    """)
+
     # Simple migration if the column doesn't exist
     try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN is_enabled BOOLEAN DEFAULT 0")
     except sqlite3.OperationalError:
         pass # Column already exists
+        
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN x REAL DEFAULT 0.0")
+        cursor.execute("ALTER TABLE sensors ADD COLUMN y REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
 
+    conn.commit()
+    conn.close()
+
+# ---- CRUD per Floors ----
+def get_floors():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM floors ORDER BY level DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def upsert_floor(floor_id: str, name: str, level: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO floors (id, name, level) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name, level=excluded.level
+    """, (floor_id, name, level))
+    conn.commit()
+    conn.close()
+
+def delete_floor(floor_id: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM floors WHERE id=?", (floor_id,))
+    # Cascade delete rooms
+    cursor.execute("DELETE FROM rooms WHERE floor_id=?", (floor_id,))
+    conn.commit()
+    conn.close()
+
+# ---- CRUD per Rooms ----
+def get_rooms(floor_id: str = None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    if floor_id:
+        cursor.execute("SELECT * FROM rooms WHERE floor_id=?", (floor_id,))
+    else:
+        cursor.execute("SELECT * FROM rooms")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def upsert_room(room_id: str, name: str, floor_id: str, ha_area_id: str, width: float, height: float, x: float, y: float):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO rooms (id, name, floor_id, ha_area_id, width, height, x, y) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET 
+            name=excluded.name, floor_id=excluded.floor_id, ha_area_id=excluded.ha_area_id, 
+            width=excluded.width, height=excluded.height, x=excluded.x, y=excluded.y
+    """, (room_id, name, floor_id, ha_area_id, width, height, x, y))
+    conn.commit()
+    conn.close()
+
+def delete_room(room_id: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM rooms WHERE id=?", (room_id,))
     conn.commit()
     conn.close()
 
@@ -80,6 +170,31 @@ def set_sensor_enabled(sensor_id: str, is_enabled: bool):
         cursor.execute("""
             INSERT INTO sensors (sensor_id, is_enabled) VALUES (?, ?)
         """, (sensor_id, is_enabled))
+    conn.commit()
+    conn.close()
+
+def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y: float = None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    if room_id is not None:
+        updates.append("room_id = ?")
+        params.append(room_id)
+    if x is not None:
+        updates.append("x = ?")
+        params.append(x)
+    if y is not None:
+        updates.append("y = ?")
+        params.append(y)
+        
+    if not updates:
+        return
+        
+    params.append(sensor_id)
+    query = f"UPDATE sensors SET {', '.join(updates)} WHERE sensor_id = ?"
+    cursor.execute(query, params)
     conn.commit()
     conn.close()
 

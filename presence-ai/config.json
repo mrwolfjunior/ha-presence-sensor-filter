@@ -1,6 +1,6 @@
 {
   "name": "Presence Sensor Filter AI",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "slug": "presence_sensor_filter",
   "description": "Advanced Machine Learning presence filter with visual room mapping for Zigbee radars",
   "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
@@ -12,13 +12,17 @@
     "mqtt_server": "core-mosquitto",
     "mqtt_user": "mqtt",
     "mqtt_password": "",
-    "mqtt_port": 1883
+    "mqtt_port": 1883,
+    "mqtt_base_topic": "zigbee2mqtt",
+    "mqtt_discovery_prefix": "homeassistant"
   },
   "schema": {
     "mqtt_server": "str",
     "mqtt_user": "str",
     "mqtt_password": "password",
-    "mqtt_port": "port"
+    "mqtt_port": "port",
+    "mqtt_base_topic": "str",
+    "mqtt_discovery_prefix": "str"
   },
   "ports": {
     "8099/tcp": 8099

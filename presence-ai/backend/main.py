@@ -12,7 +12,25 @@ from db import init_db, insert_sensor_event
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("presence_ai_backend")
 
-app = FastAPI(title="Presence Sensor Filter AI Backend")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    try:
+        mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
+        mqtt_client.loop_start()
+    except Exception as e:
+        logger.error(f"Failed to connect to MQTT: {e}")
+    
+    yield
+    
+    # Shutdown
+    mqtt_client.loop_stop()
+    mqtt_client.disconnect()
+
+app = FastAPI(title="Presence Sensor Filter AI Backend", lifespan=lifespan)
 
 # Enable CORS for frontend development
 app.add_middleware(
@@ -23,13 +41,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration
+# Configuration from HA Add-on options or environment variables
 MQTT_HOST = os.environ.get("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
 MQTT_USER = os.environ.get("MQTT_USER", "mqtt")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
+MQTT_BASE_TOPIC = os.environ.get("MQTT_BASE_TOPIC", "zigbee2mqtt")
+MQTT_DISCOVERY_PREFIX = os.environ.get("MQTT_DISCOVERY_PREFIX", "homeassistant")
 
-mqtt_client = mqtt.Client()
+if os.path.exists("/data/options.json"):
+    try:
+        with open("/data/options.json") as f:
+            options = json.load(f)
+            MQTT_HOST = options.get("mqtt_server", MQTT_HOST)
+            MQTT_PORT = int(options.get("mqtt_port", MQTT_PORT))
+            MQTT_USER = options.get("mqtt_user", MQTT_USER)
+            MQTT_PASS = options.get("mqtt_password", MQTT_PASS)
+            MQTT_BASE_TOPIC = options.get("mqtt_base_topic", MQTT_BASE_TOPIC)
+            MQTT_DISCOVERY_PREFIX = options.get("mqtt_discovery_prefix", MQTT_DISCOVERY_PREFIX)
+    except Exception as e:
+        logger.error(f"Failed to read options.json: {e}")
+
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
 # State management
 connected_websockets = []
@@ -44,7 +77,7 @@ async def broadcast_websocket(message: dict):
 
 def publish_discovery(sensor_id: str):
     """Publish Home Assistant MQTT Discovery payload for the filtered sensor."""
-    discovery_topic = f"homeassistant/binary_sensor/presence_ai_{sensor_id}/config"
+    discovery_topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/presence_ai_{sensor_id}/config"
     state_topic = f"presence_ai/sensor/{sensor_id}/state"
     
     payload = {
@@ -62,9 +95,9 @@ def publish_discovery(sensor_id: str):
     }
     mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
 
-def on_connect(client, userdata, flags, rc):
-    logger.info(f"Connected to MQTT broker with result code {rc}")
-    client.subscribe("zigbee2mqtt/+")
+def on_connect(client, userdata, flags, reason_code, properties):
+    logger.info(f"Connected to MQTT broker with result code {reason_code}")
+    client.subscribe(f"{MQTT_BASE_TOPIC}/+")
 
 def on_message(client, userdata, msg):
     try:
@@ -112,19 +145,6 @@ mqtt_client.on_message = on_message
 if MQTT_USER and MQTT_PASS:
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    try:
-        mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
-        mqtt_client.loop_start()
-    except Exception as e:
-        logger.error(f"Failed to connect to MQTT: {e}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    mqtt_client.loop_stop()
-    mqtt_client.disconnect()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

@@ -118,9 +118,13 @@ def on_message(client, userdata, msg):
         sensor_id = topic_parts[1]
         payload = json.loads(msg.payload.decode())
         
-        if "target_distance" in payload or "presence" in payload:
-            distance = payload.get("target_distance", 0.0)
-            presence = payload.get("presence", False)
+        # Support multiple keys: 'occupancy' vs 'presence', 'distance' vs 'target_distance'
+        has_presence = "presence" in payload or "occupancy" in payload
+        has_distance = "target_distance" in payload or "distance" in payload
+        
+        if has_presence or has_distance:
+            distance = payload.get("target_distance", payload.get("distance", 0.0))
+            presence = payload.get("presence", payload.get("occupancy", False))
             
             # Register sensor if new, do not overwrite settings
             upsert_sensor(sensor_id, is_enabled=False)

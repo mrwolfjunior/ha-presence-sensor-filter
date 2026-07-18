@@ -248,6 +248,78 @@ async def api_delete_room(room_id: str):
     delete_room(room_id)
     return {"status": "success"}
 
+import websockets
+
+@app.post("/api/sync_ha")
+async def sync_ha_topology():
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return {"status": "error", "message": "SUPERVISOR_TOKEN non trovato. Sei sicuro di essere in un Add-on?"}
+        
+    try:
+        async with websockets.connect("ws://supervisor/core/websocket") as ws:
+            # 1. Attendi auth_required
+            msg1 = json.loads(await ws.recv())
+            if msg1.get("type") != "auth_required":
+                return {"status": "error", "message": "Auth non richiesta o errore"}
+                
+            # 2. Invia auth
+            await ws.send(json.dumps({"type": "auth", "access_token": token}))
+            msg2 = json.loads(await ws.recv())
+            if msg2.get("type") != "auth_ok":
+                return {"status": "error", "message": f"Auth fallita: {msg2}"}
+                
+            # 3. Richiedi Floors
+            await ws.send(json.dumps({"id": 1, "type": "config/floor_registry/list"}))
+            msg_floors = json.loads(await ws.recv())
+            ha_floors = msg_floors.get("result", [])
+            
+            # 4. Richiedi Aree
+            await ws.send(json.dumps({"id": 2, "type": "config/area_registry/list"}))
+            msg_areas = json.loads(await ws.recv())
+            ha_areas = msg_areas.get("result", [])
+            
+            # Upsert Floors
+            for f in ha_floors:
+                floor_id = f.get("floor_id")
+                name = f.get("name")
+                level = f.get("level", 0)
+                if floor_id and name:
+                    upsert_floor(floor_id, name, level)
+            
+            # Upsert Rooms (Areas)
+            # Fetch existing rooms to keep their width/height/x/y
+            existing_rooms = {r["id"]: r for r in get_rooms()}
+            
+            for a in ha_areas:
+                area_id = a.get("area_id")
+                name = a.get("name")
+                floor_id = a.get("floor_id")
+                
+                if not area_id or not name:
+                    continue
+                    
+                # Se la stanza esiste già, mantieni dimensioni e coordinate. Altrimenti default 4.0
+                width = 4.0
+                height = 4.0
+                x = 0.0
+                y = 0.0
+                
+                if area_id in existing_rooms:
+                    width = existing_rooms[area_id].get("width", 4.0)
+                    height = existing_rooms[area_id].get("height", 4.0)
+                    x = existing_rooms[area_id].get("x", 0.0)
+                    y = existing_rooms[area_id].get("y", 0.0)
+                    
+                # Salviamo la stanza con ID uguale all'area_id di HA e floor_id uguale a quello di HA
+                upsert_room(area_id, name, floor_id, area_id, width, height, x, y)
+                
+            return {"status": "success", "floors_synced": len(ha_floors), "areas_synced": len(ha_areas)}
+            
+    except Exception as e:
+        logger.error(f"Errore durante il sync con HA: {e}")
+        return {"status": "error", "message": str(e)}
+
 # Mount the static frontend
 # Assumes /frontend/dist exists (built by Vite)
 if os.path.exists("/frontend/dist"):

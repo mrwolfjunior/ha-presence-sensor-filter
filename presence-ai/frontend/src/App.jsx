@@ -4,12 +4,11 @@ import {
   AppBar, Toolbar, Typography, Box, Tabs, Tab,
   Card, CardContent, Button, Grid, 
   List, ListItem, ListItemText, ListItemSecondaryAction,
-  Chip, Select, MenuItem, FormControl, InputLabel, TextField, Switch, IconButton
+  Chip, Select, MenuItem, FormControl, InputLabel, TextField, Switch,
+  Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
-import DeleteIcon from '@mui/icons-material/Delete';
-import RadarIcon from '@mui/icons-material/Radar';
-import SettingsIcon from '@mui/icons-material/Settings';
 import MapIcon from '@mui/icons-material/Map';
+import SettingsIcon from '@mui/icons-material/Settings';
 import './index.css';
 
 const theme = createTheme({
@@ -27,17 +26,23 @@ const theme = createTheme({
 });
 
 function App() {
-  const [currentTab, setCurrentTab] = useState(0); // 0: Blueprint, 1: Settings
+  const [currentTab, setCurrentTab] = useState(0); 
   const [connected, setConnected] = useState(false);
   
   // Data states
-  const [sensors, setSensors] = useState({}); // Live MQTT Data
-  const [dbSensors, setDbSensors] = useState([]); // Configured sensors
+  const [sensors, setSensors] = useState({}); 
+  const [dbSensors, setDbSensors] = useState([]); 
   const [floors, setFloors] = useState([]);
   const [rooms, setRooms] = useState([]);
   
   // Selection states
-  const [activeFloorId, setActiveFloorId] = useState('');
+  const [activeFloorId, setActiveFloorId] = useState(false);
+
+  // Dialog States
+  const [floorDialogOpen, setFloorDialogOpen] = useState(false);
+  const [floorName, setFloorName] = useState('');
+  const [roomDialogOpen, setRoomDialogOpen] = useState(false);
+  const [roomName, setRoomName] = useState('');
   
   // Fetch routines
   const fetchData = async () => {
@@ -48,16 +53,20 @@ function App() {
       const fData = await fRes.json();
       const rData = await rRes.json();
       const sData = await sRes.json();
+      
       setFloors(fData);
       setRooms(rData);
       setDbSensors(sData);
-      if (fData.length > 0 && !activeFloorId) setActiveFloorId(fData[0].id);
+      
+      if (fData.length > 0 && !activeFloorId) {
+        setActiveFloorId(fData[0].id);
+      }
     } catch (e) {
       console.error("Failed to fetch data", e);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [activeFloorId]);
 
   // WebSocket
   useEffect(() => {
@@ -80,30 +89,47 @@ function App() {
   }, []);
 
   // API Handlers
-  const handleAddFloor = async () => {
-    const name = prompt("Nome del piano (es. Piano Terra):");
-    if (!name) return;
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const handleAddFloorSubmit = async () => {
+    if (!floorName) return;
+    const id = floorName.toLowerCase().replace(/[^a-z0-9]/g, '_');
     await fetch('/api/floors', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name, level: floors.length })
+      body: JSON.stringify({ id, name: floorName, level: floors.length })
     });
+    setFloorDialogOpen(false);
+    setFloorName('');
+    setActiveFloorId(id);
     fetchData();
   };
 
-  const handleDeleteFloor = async (id) => {
-    await fetch(`/api/floors/${id}`, { method: 'DELETE' });
-    fetchData();
-  };
-
-  const handleAddRoom = async () => {
-    if (!activeFloorId) return alert("Seleziona un piano prima!");
-    const name = prompt("Nome della stanza (es. Salotto):");
-    if (!name) return;
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const handleAddRoomSubmit = async () => {
+    if (!roomName || !activeFloorId) return;
+    const id = roomName.toLowerCase().replace(/[^a-z0-9]/g, '_');
     await fetch('/api/rooms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name, floor_id: activeFloorId, ha_area_id: '', width: 4.0, height: 4.0, x: 0.0, y: 0.0 })
+      body: JSON.stringify({ id, name: roomName, floor_id: activeFloorId, ha_area_id: '', width: 4.0, height: 4.0, x: 0.0, y: 0.0 })
+    });
+    setRoomDialogOpen(false);
+    setRoomName('');
+    fetchData();
+  };
+
+  const handleSyncHA = async () => {
+    const res = await fetch('/api/sync_ha', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'success') {
+      alert(`Sincronizzati ${data.floors_synced} piani e ${data.areas_synced} stanze da Home Assistant.`);
+      fetchData();
+    } else {
+      alert(`Errore di Sincronizzazione: ${data.message}`);
+    }
+  };
+
+  const updateRoomSize = async (room, field, value) => {
+    const updated = { ...room, [field]: value };
+    await fetch('/api/rooms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
     });
     fetchData();
   };
@@ -157,10 +183,16 @@ function App() {
               <Grid item xs={12} md={8}>
                 <Card elevation={3} sx={{ height: '100%', minHeight: 500, p: 2 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                    <Tabs value={activeFloorId} onChange={(e, v) => setActiveFloorId(v)}>
+                    <Tabs 
+                      value={activeFloorId || false} 
+                      onChange={(e, v) => setActiveFloorId(v)}
+                    >
                       {floors.map(f => <Tab key={f.id} value={f.id} label={f.name} />)}
                     </Tabs>
-                    <Button variant="outlined" onClick={handleAddFloor}>+ Piano</Button>
+                    <Box>
+                      <Button variant="contained" color="secondary" onClick={handleSyncHA} sx={{ mr: 1 }}>Sync HA</Button>
+                      <Button variant="outlined" onClick={() => setFloorDialogOpen(true)}>+ Piano</Button>
+                    </Box>
                   </Box>
                   
                   {/* The actual Blueprint Area */}
@@ -179,7 +211,7 @@ function App() {
                         <Typography variant="caption" color="primary">{room.name}</Typography>
                       </Box>
                     )) : (
-                      <Typography align="center" sx={{ mt: 10 }}>Aggiungi un piano per iniziare</Typography>
+                      <Typography align="center" sx={{ mt: 10 }}>Nessun piano selezionato. Aggiungine uno!</Typography>
                     )}
 
                     {/* Render Sensors inside their rooms */}
@@ -208,12 +240,20 @@ function App() {
                   <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                       <Typography variant="h6">Stanze</Typography>
-                      <Button size="small" onClick={handleAddRoom}>+ Stanza</Button>
+                      <Button size="small" onClick={() => setRoomDialogOpen(true)} disabled={!activeFloorId}>+ Stanza</Button>
                     </Box>
                     <List dense>
                       {activeRooms.map(r => (
-                        <ListItem key={r.id}>
-                          <ListItemText primary={r.name} secondary={`${r.width}m x ${r.height}m`} />
+                        <ListItem key={r.id} sx={{ flexDirection: 'column', alignItems: 'stretch', mb: 2, bgcolor: '#2a2a2a', p: 2, borderRadius: 2 }}>
+                          <Typography variant="subtitle1" gutterBottom>{r.name}</Typography>
+                          <Grid container spacing={1}>
+                            <Grid item xs={6}>
+                              <TextField size="small" label="Larghezza (m)" type="number" value={r.width || 0} onChange={(e) => updateRoomSize(r, 'width', parseFloat(e.target.value))} />
+                            </Grid>
+                            <Grid item xs={6}>
+                              <TextField size="small" label="Altezza (m)" type="number" value={r.height || 0} onChange={(e) => updateRoomSize(r, 'height', parseFloat(e.target.value))} />
+                            </Grid>
+                          </Grid>
                         </ListItem>
                       ))}
                     </List>
@@ -282,6 +322,30 @@ function App() {
           )}
 
         </Box>
+        
+        {/* DIALOGS */}
+        <Dialog open={floorDialogOpen} onClose={() => setFloorDialogOpen(false)}>
+          <DialogTitle>Aggiungi Nuovo Piano</DialogTitle>
+          <DialogContent>
+            <TextField autoFocus margin="dense" label="Nome del Piano (es. Piano Terra)" fullWidth variant="standard" value={floorName} onChange={e => setFloorName(e.target.value)} />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setFloorDialogOpen(false)}>Annulla</Button>
+            <Button onClick={handleAddFloorSubmit} variant="contained">Aggiungi</Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={roomDialogOpen} onClose={() => setRoomDialogOpen(false)}>
+          <DialogTitle>Aggiungi Nuova Stanza</DialogTitle>
+          <DialogContent>
+            <TextField autoFocus margin="dense" label="Nome della Stanza (es. Salotto)" fullWidth variant="standard" value={roomName} onChange={e => setRoomName(e.target.value)} />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setRoomDialogOpen(false)}>Annulla</Button>
+            <Button onClick={handleAddRoomSubmit} variant="contained">Aggiungi</Button>
+          </DialogActions>
+        </Dialog>
+
       </Box>
     </ThemeProvider>
   );

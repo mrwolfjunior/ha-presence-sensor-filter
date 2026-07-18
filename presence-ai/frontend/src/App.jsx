@@ -115,13 +115,22 @@ function App() {
   };
 
   const handleSyncHA = async () => {
-    const res = await fetch('/api/sync_ha', { method: 'POST' });
-    const data = await res.json();
-    if (data.status === 'success') {
-      alert(`Sincronizzati ${data.floors_synced} piani e ${data.areas_synced} stanze da Home Assistant.`);
-      fetchData();
-    } else {
-      alert(`Errore di Sincronizzazione: ${data.message}`);
+    try {
+      const res = await fetch('/api/sync_ha', { method: 'POST' });
+      const text = await res.text();
+      try {
+        const data = JSON.parse(text);
+        if (data.status === 'success') {
+          alert(`Sincronizzati ${data.floors_synced} piani e ${data.areas_synced} stanze da Home Assistant.`);
+          fetchData();
+        } else {
+          alert(`Errore di Sincronizzazione: ${data.message}`);
+        }
+      } catch (err) {
+        alert(`Errore del server (HTTP ${res.status}): ${text.substring(0, 100)}`);
+      }
+    } catch (e) {
+      alert(`Errore di rete: ${e.message}`);
     }
   };
 

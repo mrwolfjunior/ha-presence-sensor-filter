@@ -29,6 +29,8 @@ function App() {
   const [currentTab, setCurrentTab] = useState(0); 
   const [connected, setConnected] = useState(false);
   
+  const basePath = window.location.pathname.replace(/\/$/, "");
+  
   // Data states
   const [sensors, setSensors] = useState({}); 
   const [dbSensors, setDbSensors] = useState([]); 
@@ -48,7 +50,7 @@ function App() {
   const fetchData = async () => {
     try {
       const [fRes, rRes, sRes] = await Promise.all([
-        fetch('/api/floors'), fetch('/api/rooms'), fetch('/api/sensors')
+        fetch(`${basePath}/api/floors`), fetch(`${basePath}/api/rooms`), fetch(`${basePath}/api/sensors`)
       ]);
       const fData = await fRes.json();
       const rData = await rRes.json();
@@ -73,7 +75,6 @@ function App() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname;
     const port = window.location.port; 
-    const basePath = window.location.pathname.replace(/\/$/, "");
     const wsUrl = `${protocol}//${host}:${port}${basePath}/ws`;
     
     let ws = new WebSocket(wsUrl);
@@ -92,7 +93,7 @@ function App() {
   const handleAddFloorSubmit = async () => {
     if (!floorName) return;
     const id = floorName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    await fetch('/api/floors', {
+    await fetch(`${basePath}/api/floors`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, name: floorName, level: floors.length })
     });
@@ -105,7 +106,7 @@ function App() {
   const handleAddRoomSubmit = async () => {
     if (!roomName || !activeFloorId) return;
     const id = roomName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    await fetch('/api/rooms', {
+    await fetch(`${basePath}/api/rooms`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, name: roomName, floor_id: activeFloorId, ha_area_id: '', width: 4.0, height: 4.0, x: 0.0, y: 0.0 })
     });
@@ -116,7 +117,7 @@ function App() {
 
   const handleSyncHA = async () => {
     try {
-      const res = await fetch('/api/sync_ha', { method: 'POST' });
+      const res = await fetch(`${basePath}/api/sync_ha`, { method: 'POST' });
       const text = await res.text();
       try {
         const data = JSON.parse(text);
@@ -136,7 +137,7 @@ function App() {
 
   const updateRoomSize = async (room, field, value) => {
     const updated = { ...room, [field]: value };
-    await fetch('/api/rooms', {
+    await fetch(`${basePath}/api/rooms`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated)
     });
@@ -144,7 +145,7 @@ function App() {
   };
 
   const toggleSensor = async (sensor_id, is_enabled) => {
-    await fetch(`/api/sensors/${sensor_id}`, {
+    await fetch(`${basePath}/api/sensors/${sensor_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_enabled: !is_enabled })
     });
@@ -152,7 +153,7 @@ function App() {
   };
 
   const updateSensorConfig = async (sensor_id, field, value) => {
-    await fetch(`/api/sensors/${sensor_id}`, {
+    await fetch(`${basePath}/api/sensors/${sensor_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value })
     });

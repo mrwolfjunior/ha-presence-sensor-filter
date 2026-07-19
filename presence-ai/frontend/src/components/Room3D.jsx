@@ -203,8 +203,10 @@ export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUp
       {/* Room Name */}
       <animated.group position={[0, 0, 0.05]}>
         <Text
-          fontSize={1}
-          color="#333333" // workaround since Text doesn't animate easily, could use animated material but simpler is fine
+          fontSize={Math.min(0.7, (width * 0.9) / Math.max(1, name.length * 0.45))}
+          maxWidth={width - 0.2}
+          textAlign="center"
+          color="#3f51b5" // Primary UI color
           anchorX="center"
           anchorY="middle"
         >

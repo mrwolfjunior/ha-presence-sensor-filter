@@ -195,7 +195,7 @@ function App() {
     const defaultRoom = rooms.filter(r => r.floor_id === activeFloorId)[0];
     const newDoor = {
        id: `door_${Date.now()}`, room_id: defaultRoom.id, type: type,
-       width: 1, x: defaultRoom.x, y: defaultRoom.y + defaultRoom.height/2
+       width: 1, x: defaultRoom.x, y: defaultRoom.y + defaultRoom.height/2, rotation: 0
     };
     pushToHistory(rooms, [...doors, newDoor]);
   };
@@ -398,37 +398,40 @@ function App() {
         </Box>
 
         {/* RIGHT MAIN AREA */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, height: '100vh', overflow: 'hidden', position: 'relative' }}>
+        <Box sx={{ display: 'flex', flexGrow: 1, height: '100vh', overflow: 'hidden', bgcolor: '#f5f5f5', position: 'relative' }}>
           {currentTab === 0 ? (
-            <Box sx={{ flexGrow: 1, position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
-              
-              {/* TOP FLOATING TOOLBAR */}
-              <Paper sx={{ 
-                position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', 
-                zIndex: 1000, display: 'flex', alignItems: 'center', gap: 1, p: '4px 8px', borderRadius: 2,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-              }}>
-                <IconButton disabled={historyIndex <= 0} onClick={undo} color="primary" size="small">
-                  <UndoIcon />
-                </IconButton>
-                <IconButton disabled={historyIndex >= history.length - 1} onClick={redo} color="primary" size="small">
-                  <RedoIcon />
-                </IconButton>
-                <Box sx={{ width: '1px', height: 24, bgcolor: '#ccc', mx: 1 }} />
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  size="small" 
-                  startIcon={<SaveIcon />} 
-                  onClick={saveTopology}
-                  disabled={historyIndex <= 0} 
-                  sx={{ textTransform: 'none', fontWeight: 'bold' }}
-                >
-                  Salva Modifiche
-                </Button>
-              </Paper>
+            <>
+              <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
+                
+                {/* TOP FLOATING TOOLBAR */}
+                <Paper sx={{ 
+                  position: 'absolute', top: 20, 
+                  left: selectedElement ? 'calc(50% - 160px)' : '50%', 
+                  transform: 'translateX(-50%)', 
+                  transition: 'left 0.3s ease-in-out',
+                  zIndex: 1000, display: 'flex', alignItems: 'center', gap: 1, p: '4px 8px', borderRadius: 2,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                }}>
+                  <IconButton disabled={historyIndex <= 0} onClick={undo} color="primary" size="small">
+                    <UndoIcon />
+                  </IconButton>
+                  <IconButton disabled={historyIndex >= history.length - 1} onClick={redo} color="primary" size="small">
+                    <RedoIcon />
+                  </IconButton>
+                  <Box sx={{ width: '1px', height: 24, bgcolor: '#ccc', mx: 1 }} />
+                  <Button 
+                    variant="contained" 
+                    color="primary" 
+                    size="small" 
+                    startIcon={<SaveIcon />} 
+                    onClick={saveTopology}
+                    disabled={historyIndex <= 0} 
+                    sx={{ textTransform: 'none', fontWeight: 'bold' }}
+                  >
+                    Salva Modifiche
+                  </Button>
+                </Paper>
 
-              <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
                 <Map3D 
                   rooms={activeRooms} 
                   sensors={mapSensors.map(s => ({...s, presence: sensors[s.sensor_id]?.presence}))} 
@@ -442,6 +445,7 @@ function App() {
                   deleteDoor={deleteDoorLocal}
                   onCameraChange={setCameraZoom}
                 />
+                
                 {(() => {
                   let meters = 1;
                   if (cameraZoom * 1 < 40) {
@@ -458,7 +462,12 @@ function App() {
                   const text = `${meters} m (${squareText})`;
 
                   return (
-                    <div style={{ position: 'absolute', bottom: 20, right: 20, background: 'rgba(255,255,255,0.85)', padding: '6px 12px', borderRadius: 4, border: '1px solid #ccc', fontSize: '11px', fontWeight: 'bold', color: '#444', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}>
+                    <div style={{ 
+                      position: 'absolute', bottom: 20, 
+                      right: selectedElement ? 340 : 20, 
+                      transition: 'right 0.3s ease-in-out',
+                      background: 'rgba(255,255,255,0.85)', padding: '6px 12px', borderRadius: 4, border: '1px solid #ccc', fontSize: '11px', fontWeight: 'bold', color: '#444', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' 
+                    }}>
                       <span style={{ marginBottom: 4 }}>{text}</span>
                       <div style={{ width: barWidth, height: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2px solid #333', borderLeft: '2px solid #333', borderRight: '2px solid #333' }}>
                         <div style={{ width: 1, height: 3, background: '#333' }} />
@@ -468,14 +477,23 @@ function App() {
                   );
                 })()}
               </Box>
-              <Drawer anchor="right" open={!!selectedElement} variant="persistent" PaperProps={{ sx: { width: 320, p: 0, position: 'absolute', height: '100%', boxShadow: '-2px 0 10px rgba(0,0,0,0.1)' } }}>
-                <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', bgcolor: '#fff' }}>
+
+              {/* SLIDING RIGHT SIDEBAR */}
+              <Box sx={{ 
+                position: 'absolute', top: 0, right: 0, height: '100%', 
+                width: 320, minWidth: 320, bgcolor: '#fff', borderLeft: '1px solid #eee', 
+                display: 'flex', flexDirection: 'column', zIndex: 10, 
+                boxShadow: '-2px 0 10px rgba(0,0,0,0.05)',
+                transform: selectedElement ? 'translateX(0)' : 'translateX(100%)',
+                transition: 'transform 0.3s ease-in-out'
+              }}>
+                <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee' }}>
                   <Typography variant="subtitle1" fontWeight="bold">Proprietà Oggetto</Typography>
                   <IconButton onClick={() => setSelectedElement(null)} size="small">X</IconButton>
                 </Box>
                 <Box sx={{ p: 2, flexGrow: 1, overflowY: 'auto' }}>{renderSidebar()}</Box>
-              </Drawer>
-            </Box>
+              </Box>
+            </>
           ) : (
             <Box sx={{ width: '100%', height: '100%', py: 6, px: 6, overflowY: 'auto', bgcolor: 'background.default', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               {settingsSection === 'status' && (

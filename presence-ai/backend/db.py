@@ -80,7 +80,8 @@ def init_db():
             y REAL DEFAULT 0.0,
             width REAL DEFAULT 1.0,
             is_magnetic BOOLEAN DEFAULT 0,
-            sensor_id TEXT
+            sensor_id TEXT,
+            rotation REAL DEFAULT 0.0
         )
     """)
 
@@ -100,6 +101,11 @@ def init_db():
         cursor.execute("ALTER TABLE sensors ADD COLUMN fov_angle REAL DEFAULT 120.0")
         cursor.execute("ALTER TABLE sensors ADD COLUMN heading_angle REAL DEFAULT 0.0")
         cursor.execute("ALTER TABLE sensors ADD COLUMN max_distance REAL DEFAULT 8.0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE doors_windows ADD COLUMN rotation REAL DEFAULT 0.0")
     except sqlite3.OperationalError:
         pass
 
@@ -243,17 +249,18 @@ def get_doors_windows():
     conn.close()
     return [dict(row) for row in rows]
 
-def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str):
+def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str, rotation: float = 0.0):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET 
             name=excluded.name, room_id=excluded.room_id, type=excluded.type,
             x=excluded.x, y=excluded.y, width=excluded.width,
-            is_magnetic=excluded.is_magnetic, sensor_id=excluded.sensor_id
-    """, (item_id, name, room_id, type, x, y, width, is_magnetic, sensor_id))
+            is_magnetic=excluded.is_magnetic, sensor_id=excluded.sensor_id,
+            rotation=excluded.rotation
+    """, (item_id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation))
     conn.commit()
     conn.close()
 

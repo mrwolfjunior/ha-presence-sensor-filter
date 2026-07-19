@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+- UX: Implementato lo Zoom & Pan per la Blueprint.
+- UX: Aggiunta scala di misura (metri) in sovrimpressione.
+- UX: Disposizione "Staging" inziale orizzontale delle stanze sincronizzate.
+- UX: Ritaglio automatico del cono radar sui bordi della stanza (Wall Clipping).
+- UX: Snapping e magnetismo delle porte con calcolo orientamento (rotazione muri).
+- UX: Auto-assegnamento automatico stanza quando si trascina il sensore sulla Blueprint.
+
 ## 1.1.0
 - Map Revamp: Stanze ridimensionabili e trascinabili in modo interattivo con React-Rnd.
 - Toolboxes per trascinare e posizionare sensori, porte e finestre sulla mappa con Drag & Drop.

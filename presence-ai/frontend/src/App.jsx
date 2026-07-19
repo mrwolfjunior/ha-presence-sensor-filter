@@ -15,6 +15,7 @@ import WindowIcon from '@mui/icons-material/Window';
 import SensorsIcon from '@mui/icons-material/Sensors';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { Rnd } from 'react-rnd';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import './index.css';
 
 const theme = createTheme({
@@ -45,6 +46,7 @@ function App() {
   const [floors, setFloors] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [doors, setDoors] = useState([]);
+  const [mapScale, setMapScale] = useState(1);
   
   // Selection states
   const [activeFloorId, setActiveFloorId] = useState('');
@@ -195,8 +197,8 @@ function App() {
   const onDropMap = async (e) => {
     e.preventDefault();
     const mapRect = e.currentTarget.getBoundingClientRect();
-    const dropX = (e.clientX - mapRect.left) / PIXELS_PER_METER;
-    const dropY = (e.clientY - mapRect.top) / PIXELS_PER_METER;
+    const dropX = (e.clientX - mapRect.left) / (PIXELS_PER_METER * mapScale);
+    const dropY = (e.clientY - mapRect.top) / (PIXELS_PER_METER * mapScale);
     
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
@@ -219,11 +221,25 @@ function App() {
           dropX >= r.x && dropX <= r.x + r.width &&
           dropY >= r.y && dropY <= r.y + r.height
         );
+        
+        let finalRot = 0;
+        if (fallingRoom) {
+          const distTop = Math.abs(dropY - fallingRoom.y);
+          const distBottom = Math.abs(dropY - (fallingRoom.y + fallingRoom.height));
+          const distLeft = Math.abs(dropX - fallingRoom.x);
+          const distRight = Math.abs(dropX - (fallingRoom.x + fallingRoom.width));
+          const minDist = Math.min(distTop, distBottom, distLeft, distRight);
+          if (minDist === distTop) finalRot = 0;
+          else if (minDist === distRight) finalRot = 90;
+          else if (minDist === distBottom) finalRot = 180;
+          else if (minDist === distLeft) finalRot = 270;
+        }
+
         await fetch(`${basePath}/api/doors`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id, name: `Nuova ${data.type}`, room_id: fallingRoom ? fallingRoom.id : '', 
-            type: data.type, x: dropX, y: dropY, width: 1.0, is_magnetic: false, sensor_id: ''
+            type: data.type, x: dropX, y: dropY, width: 1.0, is_magnetic: false, sensor_id: '', rotation: finalRot
           })
         });
         fetchData();
@@ -259,10 +275,23 @@ function App() {
 
     const liveData = sensors[s.sensor_id];
     const isPresent = liveData?.presence;
+    const room = activeRooms.find(r => r.id === s.room_id);
 
     return (
       <svg style={{ position: 'absolute', top: -radius, left: -radius, width: radius*2, height: radius*2, pointerEvents: 'none' }}>
-        <g transform={`translate(${radius}, ${radius})`}>
+        {room && (
+          <defs>
+            <clipPath id={`clip_${s.sensor_id}`}>
+              <rect 
+                x={(room.x - s.x) * PIXELS_PER_METER + radius} 
+                y={(room.y - s.y) * PIXELS_PER_METER + radius} 
+                width={room.width * PIXELS_PER_METER} 
+                height={room.height * PIXELS_PER_METER} 
+              />
+            </clipPath>
+          </defs>
+        )}
+        <g transform={`translate(${radius}, ${radius})`} clipPath={room ? `url(#clip_${s.sensor_id})` : undefined}>
           <path d={pathData} fill={isPresent ? 'rgba(244, 67, 54, 0.2)' : 'rgba(76, 175, 80, 0.1)'} stroke={isPresent ? '#f44336' : '#4caf50'} strokeWidth="1" strokeDasharray="5,5" />
         </g>
       </svg>
@@ -337,6 +366,7 @@ function App() {
             <Grid item xs={6}><TextField fullWidth size="small" type="number" label="Y (m)" value={d.y || 0} onChange={e => updateDoor(d.id, {y: parseFloat(e.target.value)})} /></Grid>
           </Grid>
           <TextField fullWidth size="small" type="number" label="Larghezza (m)" value={d.width || 1.0} onChange={e => updateDoor(d.id, {width: parseFloat(e.target.value)})} sx={{mb: 2}} />
+          <TextField fullWidth size="small" type="number" label="Rotazione (°)" value={d.rotation || 0} onChange={e => updateDoor(d.id, {rotation: parseFloat(e.target.value)})} sx={{mb: 2}} />
           
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
             <Typography variant="body2">Sensore Magnetico Z2M?</Typography>
@@ -430,24 +460,35 @@ function App() {
                       sx={{ p: 1, mb: 1, bgcolor: '#222', border: '1px solid #444', borderRadius: 1, cursor: 'grab', display: 'flex', alignItems: 'center' }}
                     >
                       <SensorsIcon sx={{mr:1, color: '#03A9F4'}} />
-                      <Typography variant="body2" noWrap>{s.friendly_name}</Typography>
+                      <Typography variant="body2" noWrap>{s.friendly_name || s.sensor_id}</Typography>
                     </Box>
                   ))}
                 </Box>
               </Box>
 
               {/* CENTER MAP */}
-              <Box sx={{ flexGrow: 1, position: 'relative', bgcolor: '#0a0a0a', overflow: 'hidden' }}
-                   onDragOver={e => e.preventDefault()}
-                   onDrop={onDropMap}
-              >
-                {!activeFloorId && (
-                  <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-                    <Typography color="text.secondary">Crea o seleziona un piano per iniziare a mappare.</Typography>
-                  </Box>
-                )}
+              <Box sx={{ flexGrow: 1, position: 'relative', bgcolor: '#0a0a0a', overflow: 'hidden' }}>
+                <TransformWrapper
+                  initialScale={1}
+                  minScale={0.1}
+                  maxScale={5}
+                  onTransformed={(ref) => setMapScale(ref.state.scale)}
+                  panning={{ disabled: selectedElement !== null, wheelPanning: true }}
+                >
+                  <TransformComponent wrapperStyle={{ width: '100%', height: '100%' }}>
+                    <Box 
+                      sx={{ width: 4000, height: 4000, position: 'relative' }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={onDropMap}
+                      onClick={() => setSelectedElement(null)}
+                    >
+                      {!activeFloorId && (
+                        <Box sx={{ position: 'absolute', top: 200, left: '50%', transform: 'translateX(-50%)' }}>
+                          <Typography color="text.secondary">Crea o seleziona un piano per iniziare a mappare.</Typography>
+                        </Box>
+                      )}
 
-                {/* Rooms Render */}
+                      {/* Rooms Render */}
                 {activeRooms.map(room => (
                   <Rnd
                     key={room.id}
@@ -462,8 +503,9 @@ function App() {
                         y: position.y / PIXELS_PER_METER
                       });
                     }}
+                    enableResizing={{ top:true, right:true, bottom:true, left:true, topRight:true, bottomRight:true, bottomLeft:true, topLeft:true }}
                     bounds="parent"
-                    onClick={() => setSelectedElement({type: 'room', id: room.id})}
+                    onClick={(e) => { e.stopPropagation(); setSelectedElement({type: 'room', id: room.id}); }}
                     style={{
                       border: selectedElement?.id === room.id ? '2px solid #fff' : '2px solid #03A9F4',
                       backgroundColor: 'rgba(3, 169, 244, 0.05)',
@@ -487,11 +529,13 @@ function App() {
                     }}
                     bounds="parent"
                     enableResizing={{left: true, right: true, top: false, bottom: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false}}
-                    onClick={() => setSelectedElement({type: 'door', id: door.id})}
+                    onClick={(e) => { e.stopPropagation(); setSelectedElement({type: 'door', id: door.id}); }}
                     style={{
                       border: selectedElement?.id === door.id ? '2px solid #ffeb3b' : '1px solid #aaa',
                       backgroundColor: door.type === 'door' ? '#8d6e63' : '#81d4fa',
-                      cursor: 'pointer', zIndex: 10
+                      cursor: 'pointer', zIndex: 10,
+                      transform: `rotate(${door.rotation || 0}deg)`,
+                      transformOrigin: 'center center'
                     }}
                   />
                 ))}
@@ -505,10 +549,22 @@ function App() {
                       key={s.sensor_id}
                       size={{ width: 24, height: 24 }}
                       position={{ x: (s.x * PIXELS_PER_METER) - 12, y: (s.y * PIXELS_PER_METER) - 12 }}
-                      onDragStop={(e, d) => updateSensorConfig(s.sensor_id, { x: (d.x + 12) / PIXELS_PER_METER, y: (d.y + 12) / PIXELS_PER_METER })}
+                      onDragStop={(e, d) => {
+                        const newX = (d.x + 12) / PIXELS_PER_METER;
+                        const newY = (d.y + 12) / PIXELS_PER_METER;
+                        const fallingRoom = activeRooms.find(r => 
+                          newX >= r.x && newX <= r.x + r.width &&
+                          newY >= r.y && newY <= r.y + r.height
+                        );
+                        updateSensorConfig(s.sensor_id, { 
+                          x: newX, 
+                          y: newY,
+                          ...(fallingRoom ? { room_id: fallingRoom.id } : {})
+                        });
+                      }}
                       enableResizing={false}
                       bounds="parent"
-                      onClick={() => setSelectedElement({type: 'sensor', id: s.sensor_id})}
+                      onClick={(e) => { e.stopPropagation(); setSelectedElement({type: 'sensor', id: s.sensor_id}); }}
                       style={{
                         backgroundColor: isPresent ? '#f44336' : '#4caf50',
                         borderRadius: '50%',
@@ -522,6 +578,15 @@ function App() {
                   );
                 })}
 
+                    </Box>
+                  </TransformComponent>
+                </TransformWrapper>
+
+                {/* Scale Bar */}
+                <Box sx={{ position: 'absolute', bottom: 16, right: 16, bgcolor: 'rgba(0,0,0,0.7)', p: 1, borderRadius: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none' }}>
+                  <Typography variant="caption" sx={{ color: '#fff', mb: 0.5 }}>{mapScale >= 1 ? '1 metro' : '5 metri'}</Typography>
+                  <Box sx={{ width: PIXELS_PER_METER * mapScale * (mapScale >= 1 ? 1 : 5), height: 4, bgcolor: '#03A9F4' }} />
+                </Box>
               </Box>
 
               {/* RIGHT SIDEBAR */}

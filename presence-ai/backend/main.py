@@ -286,6 +286,7 @@ class DoorWindowConfig(BaseModel):
     width: float = 1.0
     is_magnetic: bool = False
     sensor_id: str = ""
+    rotation: float = 0.0
 
 @app.get("/api/doors")
 async def api_get_doors():
@@ -293,7 +294,7 @@ async def api_get_doors():
 
 @app.post("/api/doors")
 async def api_upsert_door(item: DoorWindowConfig):
-    upsert_door_window(item.id, item.name, item.room_id, item.type, item.x, item.y, item.width, item.is_magnetic, item.sensor_id)
+    upsert_door_window(item.id, item.name, item.room_id, item.type, item.x, item.y, item.width, item.is_magnetic, item.sensor_id, item.rotation)
     return {"status": "success"}
 
 @app.delete("/api/doors/{item_id}")
@@ -344,7 +345,7 @@ async def sync_ha_topology():
             # Fetch existing rooms to keep their width/height/x/y
             existing_rooms = {r["id"]: r for r in get_rooms()}
             
-            for a in ha_areas:
+            for i, a in enumerate(ha_areas):
                 area_id = a.get("area_id")
                 name = a.get("name")
                 floor_id = a.get("floor_id")
@@ -355,7 +356,7 @@ async def sync_ha_topology():
                 # Se la stanza esiste già, mantieni dimensioni e coordinate. Altrimenti default 4.0
                 width = 4.0
                 height = 4.0
-                x = 0.0
+                x = i * 4.5
                 y = 0.0
                 
                 if area_id in existing_rooms:

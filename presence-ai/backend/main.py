@@ -11,7 +11,8 @@ from db import (
     init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, 
     get_all_sensors, set_sensor_enabled, update_sensor_config,
     get_floors, upsert_floor, delete_floor,
-    get_rooms, upsert_room, delete_room
+    get_rooms, upsert_room, delete_room,
+    get_doors_windows, upsert_door_window, delete_door_window
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -108,15 +109,35 @@ def publish_discovery(sensor_id: str):
 def on_connect(client, userdata, flags, reason_code, properties):
     logger.info(f"Connected to MQTT broker with result code {reason_code}")
     client.subscribe(f"{MQTT_BASE_TOPIC}/+")
+    client.subscribe(f"{MQTT_BASE_TOPIC}/bridge/devices")
 
 def on_message(client, userdata, msg):
     try:
         topic_parts = msg.topic.split("/")
-        if len(topic_parts) != 2:
+        if len(topic_parts) != 2 and not msg.topic.endswith("bridge/devices"):
             return
             
-        sensor_id = topic_parts[1]
         payload = json.loads(msg.payload.decode())
+        
+        # Handle bridge devices to prepopulate sensor list
+        if msg.topic.endswith("bridge/devices"):
+            if isinstance(payload, list):
+                for device in payload:
+                    if not device.get("friendly_name") or device["friendly_name"] == "Coordinator":
+                        continue
+                    
+                    is_presence_or_magnetic = False
+                    if "exposes" in device.get("definition", {}):
+                        # Prepopulate everything that could be a sensor to allow user selection
+                        for expose in device["definition"]["exposes"]:
+                            if expose.get("property") in ["presence", "occupancy", "contact"]:
+                                is_presence_or_magnetic = True
+                                break
+                    if is_presence_or_magnetic:
+                        upsert_sensor(device["friendly_name"], is_enabled=False)
+            return
+
+        sensor_id = topic_parts[1]
         
         # Support multiple keys: 'occupancy' vs 'presence', 'distance' vs 'target_distance'
         has_presence = "presence" in payload or "occupancy" in payload
@@ -195,12 +216,18 @@ class SensorConfig(BaseModel):
     room_id: Optional[str] = None
     x: Optional[float] = None
     y: Optional[float] = None
+    fov_angle: Optional[float] = None
+    heading_angle: Optional[float] = None
+    max_distance: Optional[float] = None
 
 @app.post("/api/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, config: SensorConfig):
     if config.is_enabled is not None:
         set_sensor_enabled(sensor_id, config.is_enabled)
-    update_sensor_config(sensor_id, config.room_id, config.x, config.y)
+    update_sensor_config(
+        sensor_id, config.room_id, config.x, config.y, 
+        config.fov_angle, config.heading_angle, config.max_distance
+    )
     return {"status": "success"}
 
 # ---- Floors API ----
@@ -246,6 +273,32 @@ async def api_upsert_room(room: RoomConfig):
 @app.delete("/api/rooms/{room_id}")
 async def api_delete_room(room_id: str):
     delete_room(room_id)
+    return {"status": "success"}
+
+# ---- Doors / Windows API ----
+class DoorWindowConfig(BaseModel):
+    id: str
+    name: str
+    room_id: str
+    type: str
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 1.0
+    is_magnetic: bool = False
+    sensor_id: str = ""
+
+@app.get("/api/doors")
+async def api_get_doors():
+    return get_doors_windows()
+
+@app.post("/api/doors")
+async def api_upsert_door(item: DoorWindowConfig):
+    upsert_door_window(item.id, item.name, item.room_id, item.type, item.x, item.y, item.width, item.is_magnetic, item.sensor_id)
+    return {"status": "success"}
+
+@app.delete("/api/doors/{item_id}")
+async def api_delete_door(item_id: str):
+    delete_door_window(item_id)
     return {"status": "success"}
 
 import websockets

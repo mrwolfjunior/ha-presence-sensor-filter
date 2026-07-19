@@ -36,7 +36,12 @@ def init_db():
             friendly_name TEXT,
             calibration_offset REAL DEFAULT 0.0,
             room_id TEXT,
-            is_enabled BOOLEAN DEFAULT 0
+            is_enabled BOOLEAN DEFAULT 0,
+            x REAL DEFAULT 0.0,
+            y REAL DEFAULT 0.0,
+            fov_angle REAL DEFAULT 120.0,
+            heading_angle REAL DEFAULT 0.0,
+            max_distance REAL DEFAULT 8.0
         )
     """)
     
@@ -64,6 +69,21 @@ def init_db():
         )
     """)
 
+    # Table for doors and windows
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS doors_windows (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            room_id TEXT,
+            type TEXT, -- 'door', 'window'
+            x REAL DEFAULT 0.0,
+            y REAL DEFAULT 0.0,
+            width REAL DEFAULT 1.0,
+            is_magnetic BOOLEAN DEFAULT 0,
+            sensor_id TEXT
+        )
+    """)
+
     # Simple migration if the column doesn't exist
     try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN is_enabled BOOLEAN DEFAULT 0")
@@ -73,6 +93,13 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN x REAL DEFAULT 0.0")
         cursor.execute("ALTER TABLE sensors ADD COLUMN y REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN fov_angle REAL DEFAULT 120.0")
+        cursor.execute("ALTER TABLE sensors ADD COLUMN heading_angle REAL DEFAULT 0.0")
+        cursor.execute("ALTER TABLE sensors ADD COLUMN max_distance REAL DEFAULT 8.0")
     except sqlite3.OperationalError:
         pass
 
@@ -173,7 +200,7 @@ def set_sensor_enabled(sensor_id: str, is_enabled: bool):
     conn.commit()
     conn.close()
 
-def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y: float = None):
+def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y: float = None, fov_angle: float = None, heading_angle: float = None, max_distance: float = None):
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -188,6 +215,15 @@ def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y
     if y is not None:
         updates.append("y = ?")
         params.append(y)
+    if fov_angle is not None:
+        updates.append("fov_angle = ?")
+        params.append(fov_angle)
+    if heading_angle is not None:
+        updates.append("heading_angle = ?")
+        params.append(heading_angle)
+    if max_distance is not None:
+        updates.append("max_distance = ?")
+        params.append(max_distance)
         
     if not updates:
         return
@@ -195,6 +231,36 @@ def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y
     params.append(sensor_id)
     query = f"UPDATE sensors SET {', '.join(updates)} WHERE sensor_id = ?"
     cursor.execute(query, params)
+    conn.commit()
+    conn.close()
+
+# ---- CRUD per Doors/Windows ----
+def get_doors_windows():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM doors_windows")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET 
+            name=excluded.name, room_id=excluded.room_id, type=excluded.type,
+            x=excluded.x, y=excluded.y, width=excluded.width,
+            is_magnetic=excluded.is_magnetic, sensor_id=excluded.sensor_id
+    """, (item_id, name, room_id, type, x, y, width, is_magnetic, sensor_id))
+    conn.commit()
+    conn.close()
+
+def delete_door_window(item_id: str):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM doors_windows WHERE id=?", (item_id,))
     conn.commit()
     conn.close()
 

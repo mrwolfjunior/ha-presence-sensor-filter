@@ -13,10 +13,16 @@
     "@emotion/styled": "^11.11.0",
     "@mui/icons-material": "^5.15.14",
     "@mui/material": "^5.15.14",
+    "@react-spring/three": "^10.1.2",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@types/three": "^0.185.1",
+    "@use-gesture/react": "^10.3.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-rnd": "^10.4.13",
-    "react-zoom-pan-pinch": "^3.6.1"
+    "react-zoom-pan-pinch": "^3.6.1",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

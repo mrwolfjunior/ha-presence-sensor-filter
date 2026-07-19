@@ -249,6 +249,58 @@ def get_doors_windows():
     conn.close()
     return [dict(row) for row in rows]
 
+def reset_topology():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM doors_windows")
+    cursor.execute("DELETE FROM rooms")
+    cursor.execute("DELETE FROM floors")
+    # Non eliminiamo i sensori, ma li scolleghiamo dalle stanze
+    cursor.execute("UPDATE sensors SET room_id = NULL")
+    conn.commit()
+    conn.close()
+
+def sync_topology(rooms: list, doors: list):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM rooms")
+    current_room_ids = {row['id'] for row in cursor.fetchall()}
+    
+    cursor.execute("SELECT id FROM doors_windows")
+    current_door_ids = {row['id'] for row in cursor.fetchall()}
+    
+    new_room_ids = {r['id'] for r in rooms}
+    new_door_ids = {d['id'] for d in doors}
+    
+    for rid in current_room_ids - new_room_ids:
+        cursor.execute("DELETE FROM rooms WHERE id=?", (rid,))
+        
+    for did in current_door_ids - new_door_ids:
+        cursor.execute("DELETE FROM doors_windows WHERE id=?", (did,))
+        
+    for r in rooms:
+        cursor.execute("""
+            INSERT INTO rooms (id, name, floor_id, ha_area_id, width, height, x, y) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET 
+                name=excluded.name, floor_id=excluded.floor_id, ha_area_id=excluded.ha_area_id, 
+                width=excluded.width, height=excluded.height, x=excluded.x, y=excluded.y
+        """, (r['id'], r['name'], r['floor_id'], r.get('ha_area_id', ''), r['width'], r['height'], r['x'], r['y']))
+        
+    for d in doors:
+        cursor.execute("""
+            INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET 
+                name=excluded.name, room_id=excluded.room_id, type=excluded.type, 
+                x=excluded.x, y=excluded.y, width=excluded.width, is_magnetic=excluded.is_magnetic, 
+                sensor_id=excluded.sensor_id, rotation=excluded.rotation
+        """, (d['id'], d['name'], d['room_id'], d['type'], d['x'], d['y'], d['width'], d.get('is_magnetic', False), d.get('sensor_id', ''), d.get('rotation', 0.0)))
+        
+    conn.commit()
+    conn.close()
+
 def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str, rotation: float = 0.0):
     conn = get_connection()
     cursor = conn.cursor()

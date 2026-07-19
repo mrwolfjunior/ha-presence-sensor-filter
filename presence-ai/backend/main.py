@@ -16,7 +16,7 @@ from db import (
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 logger = logging.getLogger("presence_ai_backend")
 
 from contextlib import asynccontextmanager
@@ -300,6 +300,22 @@ async def api_upsert_door(item: DoorWindowConfig):
 @app.delete("/api/doors/{item_id}")
 async def api_delete_door(item_id: str):
     delete_door_window(item_id)
+    return {"status": "success"}
+
+@app.post("/api/reset_topology")
+async def api_reset_topology():
+    from db import reset_topology
+    reset_topology()
+    return {"status": "success"}
+
+class SyncTopologyPayload(BaseModel):
+    rooms: List[dict]
+    doors: List[dict]
+
+@app.post("/api/topology/sync")
+async def api_sync_topology(payload: SyncTopologyPayload):
+    from db import sync_topology
+    sync_topology(payload.rooms, payload.doors)
     return {"status": "success"}
 
 import websockets

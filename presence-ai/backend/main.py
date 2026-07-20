@@ -2,7 +2,7 @@ import logging
 import json
 import os
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 import paho.mqtt.client as mqtt
 from collections import defaultdict, deque
@@ -10,6 +10,7 @@ from collections import defaultdict, deque
 from db import (
     init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, 
     get_all_sensors, set_sensor_enabled, update_sensor_config,
+    update_sensor_calibration_time,
     get_floors, upsert_floor, delete_floor,
     get_rooms, upsert_room, delete_room,
     get_doors_windows, upsert_door_window, delete_door_window
@@ -21,8 +22,12 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger("presence_ai_backend")
 
 from contextlib import asynccontextmanager
+import traceback
+from fastapi.responses import JSONResponse
 
 main_loop = None
+active_calibrations = {}
+latest_payloads = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,6 +48,13 @@ async def lifespan(app: FastAPI):
     mqtt_client.disconnect()
 
 app = FastAPI(title="Presence Sensor Filter AI Backend", lifespan=lifespan)
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
+    )
 
 # Enable CORS for frontend development
 app.add_middleware(
@@ -146,6 +158,7 @@ def on_message(client, userdata, msg):
         has_distance = "target_distance" in payload or "distance" in payload
         
         if has_presence or has_distance:
+            latest_payloads[sensor_id] = payload
             distance = payload.get("target_distance", payload.get("distance", 0.0))
             presence = payload.get("presence", payload.get("occupancy", False))
             
@@ -166,6 +179,19 @@ def on_message(client, userdata, msg):
                     }),
                     main_loop
                 )
+
+            # --- Calibration Recording Logic ---
+            if sensor_id in active_calibrations:
+                cal_state = active_calibrations[sensor_id]
+                if cal_state.get('step') is not None: # Recording is active
+                    target_obj = {
+                        "distance": distance,
+                        "presence": presence,
+                        "x": payload.get("target_x"),
+                        "y": payload.get("target_y"),
+                        "energy": payload.get("energy", payload.get("target_energy", 0))
+                    }
+                    cal_state['buffer'].append(target_obj)
             
             # Only process ML and broadcast HA Discovery if enabled
             if not is_sensor_enabled(sensor_id):
@@ -196,6 +222,10 @@ if MQTT_USER and MQTT_PASS:
     mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 
 
+class CalibrateAction(BaseModel):
+    sensor_id: str
+    step: Optional[str] = None
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -206,28 +236,127 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         connected_websockets.remove(websocket)
 
-@app.post("/api/calibrate/{sensor_id}")
-async def start_calibration(sensor_id: str):
-    # This triggers the "Walk-to-Calibrate" mode
-    return {"status": "calibration_started", "sensor_id": sensor_id}
-
-@app.post("/api/calibrate/wizard")
-async def calibrate_wizard(action: dict):
-    # Action defines the step of the calibration wizard (e.g. 'reset', 'empty_room', 'perimeter', 'static', 'process')
-    step = action.get('step')
-    sensor_id = action.get('sensor_id')
-    room_id = action.get('room_id')
+@app.post("/api/calibrate/start")
+async def calibrate_start(action: CalibrateAction):
+    sensor_id = action.sensor_id
+    step = action.step # 'empty_room', 'perimeter', 'static'
     
-    if step == 'reset':
-        print(f"[CALIBRATION] Resetting sensor {sensor_id} to maximum range and sensitivity")
-        # TODO: send HA command
-    elif step == 'process':
-        print(f"[CALIBRATION] Processing collected data for sensor {sensor_id} in room {room_id}")
-        # TODO: ML Processing logic goes here
-        # Return the new configured values to the frontend
-        return {"status": "success", "new_max_distance": 4.5, "new_sensitivity": 70}
+    if sensor_id not in active_calibrations:
+        active_calibrations[sensor_id] = {
+            "step": None,
+            "buffer": [],
+            "results": {"empty_room": [], "perimeter": [], "static": []}
+        }
         
-    return {"status": "success", "step": step}
+    active_calibrations[sensor_id]['step'] = step
+    active_calibrations[sensor_id]['buffer'] = []
+    return {"status": "success"}
+
+@app.post("/api/calibrate/stop")
+async def calibrate_stop(action: CalibrateAction):
+    sensor_id = action.sensor_id
+    step = action.step
+    
+    if sensor_id in active_calibrations and active_calibrations[sensor_id]['step'] == step:
+        # Save buffer to results and clear active step
+        active_calibrations[sensor_id]['results'][step] = active_calibrations[sensor_id]['buffer']
+        samples_collected = len(active_calibrations[sensor_id]['buffer'])
+        active_calibrations[sensor_id]['step'] = None
+        
+        quality = "good" if samples_collected > 10 else "poor"
+        message = f"Raccolti {samples_collected} campioni."
+        if quality == "poor":
+            message += " Pochi dati, considera di ripetere."
+            
+        return {"status": "success", "samples": samples_collected, "quality": quality, "message": message}
+    return {"status": "error", "message": "Nessuna registrazione attiva trovata"}
+
+@app.post("/api/calibrate/process")
+async def calibrate_process(action: CalibrateAction):
+    sensor_id = action.sensor_id
+    
+    if sensor_id not in active_calibrations:
+        return {"status": "error", "message": "Nessun dato di calibrazione trovato"}
+        
+    results = active_calibrations[sensor_id]['results']
+    
+    # Very simple Geometric/Heuristic analysis
+    perimeter_data = results.get('perimeter', [])
+    static_data = results.get('static', [])
+    
+    # Calculate Max Distance based on perimeter walk
+    # Use the 95th percentile of distance to filter out stray anomalies
+    if not perimeter_data:
+        max_dist = 4.0 # Fallback
+    else:
+        distances = sorted([p.get('distance', 0) for p in perimeter_data if p.get('distance') is not None])
+        if distances:
+            idx = int(len(distances) * 0.95)
+            max_dist = round(distances[min(idx, len(distances)-1)], 1) + 0.3 # Add 0.3m margin
+        else:
+            max_dist = 4.0
+            
+    # Calculate Sensitivity based on static test
+    if not static_data:
+        sensitivity = 70 # Fallback
+    else:
+        # Lower energy in static test means we need HIGHER sensitivity to detect it
+        energies = [p.get('energy', 0) for p in static_data if p.get('energy') is not None]
+        avg_energy = sum(energies) / len(energies) if energies else 50
+        # Inverse mapping: if avg_energy is 10 (low), sensitivity should be high (e.g. 90)
+        sensitivity = int(max(30, min(100, 100 - (avg_energy / 2))))
+
+    # Dynamic Zigbee2MQTT Mapping
+    recommended_config = {}
+    last_payload = latest_payloads.get(sensor_id, {})
+
+    # Map distance
+    if "detection_range" in last_payload:
+        recommended_config["detection_range"] = max_dist
+    elif "target_distance" in last_payload:
+        recommended_config["target_distance"] = max_dist
+    elif "max_range" in last_payload:
+        recommended_config["max_range"] = max_dist
+    else:
+        # Fallback to a standard field if not found, or maybe both
+        recommended_config["detection_range"] = max_dist
+
+    # Map sensitivity (1-10 scale for Tuya radar_sensitivity usually, but we calculated 0-100)
+    # Zigbee2MQTT Tuya mmWave usually uses 0-10 or 0-9 for radar_sensitivity
+    sens_10_scale = int(round(sensitivity / 10))
+    sens_10_scale = max(0, min(10, sens_10_scale))
+
+    if "radar_sensitivity" in last_payload:
+        recommended_config["radar_sensitivity"] = sens_10_scale
+    if "entry_sensitivity" in last_payload:
+        recommended_config["entry_sensitivity"] = sens_10_scale
+    if "sensitivity" in last_payload:
+        recommended_config["sensitivity"] = sensitivity # Usually 0-100 for non-tuya
+
+    # If no sensitivity fields found, add a fallback
+    if not any(k in recommended_config for k in ["radar_sensitivity", "entry_sensitivity", "sensitivity"]):
+        recommended_config["radar_sensitivity"] = sens_10_scale
+
+    return {
+        "status": "success", 
+        "recommended_config": recommended_config
+    }
+
+@app.post("/api/sensors/{sensor_id}/apply_config")
+async def apply_sensor_config(sensor_id: str, request: Request):
+    # Sends an MQTT message to update the sensor in Zigbee2MQTT
+    topic = f"{MQTT_BASE_TOPIC}/{sensor_id}/set"
+    payload = await request.json()
+    
+    logger.info(f"Applying config to {sensor_id} via {topic}: {payload}")
+    mqtt_client.publish(topic, json.dumps(payload))
+    update_sensor_calibration_time(sensor_id)
+    
+    # Cleanup memory
+    if sensor_id in active_calibrations:
+        del active_calibrations[sensor_id]
+        
+    return {"status": "success"}
 
 @app.get("/api/sensors")
 async def get_sensors_list():

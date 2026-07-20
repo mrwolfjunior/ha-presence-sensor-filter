@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Box, Drawer, Button, Typography, TextField, FormControl, InputLabel, 
-  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper, Tooltip
+  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper, Tooltip,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
 } from '@mui/material';
 import MapIcon from '@mui/icons-material/Map';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -898,6 +899,81 @@ function App() {
                   <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 800 }}>
                     Presence AI sta monitorando in tempo reale l'occupazione delle stanze utilizzando i dati provenienti dai sensori distribuiti nella struttura.
                   </Typography>
+
+                  <Typography variant="h5" gutterBottom fontWeight="bold" sx={{ mt: 5 }}>Dettaglio Stanze e Calibrazione</Typography>
+                  <TableContainer component={Paper} elevation={0} sx={{ border: '1px solid #eee', mb: 4, maxWidth: 800 }}>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell><b>Stanza</b></TableCell>
+                          <TableCell><b>Sensori</b></TableCell>
+                          <TableCell><b>Stato</b></TableCell>
+                          <TableCell><b>Ultima Calibrazione</b></TableCell>
+                          <TableCell align="right"><b>Azioni</b></TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {rooms.map(room => {
+                          const roomSensors = dbSensors.filter(s => s.room_id === room.id);
+                          const calibratedSensors = roomSensors.filter(s => s.last_calibrated_at);
+                          const isCalibrated = roomSensors.length > 0 && calibratedSensors.length > 0;
+                          const hasSensors = roomSensors.length > 0;
+                          
+                          let lastDate = null;
+                          if (isCalibrated) {
+                            // last_calibrated_at is a string like "2023-10-25 14:32:00" coming from SQLite CURRENT_TIMESTAMP
+                            // ensure we can parse it by replacing space with T if needed, though Date() usually parses it
+                            const dates = calibratedSensors.map(s => {
+                              const d = new Date(s.last_calibrated_at.replace(' ', 'T'));
+                              return isNaN(d.getTime()) ? 0 : d.getTime();
+                            });
+                            const maxTime = Math.max(...dates, 0);
+                            if (maxTime > 0) {
+                              lastDate = new Date(maxTime).toLocaleString();
+                            }
+                          }
+
+                          return (
+                            <TableRow key={room.id}>
+                              <TableCell>{room.name}</TableCell>
+                              <TableCell>{roomSensors.length}</TableCell>
+                              <TableCell>
+                                {!hasSensors ? (
+                                  <Chip label="Nessun Sensore" size="small" />
+                                ) : isCalibrated ? (
+                                  <Chip label="Calibrata" color="success" size="small" />
+                                ) : (
+                                  <Chip label="Da Calibrare" color="warning" size="small" />
+                                )}
+                              </TableCell>
+                              <TableCell>{lastDate || '-'}</TableCell>
+                              <TableCell align="right">
+                                <Button 
+                                  variant="outlined" 
+                                  size="small" 
+                                  disabled={!hasSensors}
+                                  onClick={() => {
+                                    setCalibrationRoom(room);
+                                    setCalibrationSensor(roomSensors.length > 0 ? roomSensors[0] : null);
+                                    setCalibrationWizardOpen(true);
+                                  }}
+                                >
+                                  Calibra
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {rooms.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                              Nessuna stanza configurata
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </Box>
               )}
               {settingsSection === 'devices' && (

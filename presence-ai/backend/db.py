@@ -47,9 +47,16 @@ def init_db():
             y REAL DEFAULT 0.0,
             fov_angle REAL DEFAULT 120.0,
             heading_angle REAL DEFAULT 0.0,
-            max_distance REAL DEFAULT 8.0
+            max_distance REAL DEFAULT 8.0,
+            last_calibrated_at DATETIME
         )
     """)
+    
+    # Safe migration for existing DBs
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN last_calibrated_at DATETIME")
+    except sqlite3.OperationalError:
+        pass # Column already exists
     
     # Table for floors
     cursor.execute("""
@@ -383,6 +390,20 @@ def is_sensor_enabled(sensor_id: str) -> bool:
     row = cursor.fetchone()
     conn.close()
     return bool(row['is_enabled']) if row else False
+
+def update_sensor_calibration_time(sensor_id: str):
+    with db_lock:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE sensors 
+                SET last_calibrated_at=CURRENT_TIMESTAMP 
+                WHERE sensor_id=?
+            """, (sensor_id,))
+            conn.commit()
+        finally:
+            conn.close()
 
 def insert_sensor_event(sensor_id: str, target_distance: float, presence: bool, payload: dict):
     with db_lock:

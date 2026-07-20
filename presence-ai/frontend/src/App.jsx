@@ -57,13 +57,21 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  const pushToHistory = (newRooms, newDoors) => {
+  const pushToHistory = (newRooms, newDoors, newSensors = dbSensors) => {
+    const current = history[historyIndex];
+    if (current && 
+        JSON.stringify(current.rooms) === JSON.stringify(newRooms) &&
+        JSON.stringify(current.doors) === JSON.stringify(newDoors) &&
+        JSON.stringify(current.sensors) === JSON.stringify(newSensors)) {
+      return;
+    }
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ rooms: newRooms, doors: newDoors });
+    newHistory.push({ rooms: newRooms, doors: newDoors, sensors: newSensors });
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
     setRooms(newRooms);
     setDoors(newDoors);
+    setDbSensors(newSensors);
   };
 
   const undo = () => {
@@ -72,6 +80,7 @@ function App() {
       setHistoryIndex(newIndex);
       setRooms(history[newIndex].rooms);
       setDoors(history[newIndex].doors);
+      setDbSensors(history[newIndex].sensors);
     }
   };
 
@@ -81,6 +90,7 @@ function App() {
       setHistoryIndex(newIndex);
       setRooms(history[newIndex].rooms);
       setDoors(history[newIndex].doors);
+      setDbSensors(history[newIndex].sensors);
     }
   };
 
@@ -93,6 +103,16 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rooms: current.rooms, doors: current.doors })
       });
+      
+      // Save sensors
+      for (const sensor of current.sensors) {
+        await fetch(`${basePath}/api/sensors/${encodeURIComponent(sensor.sensor_id)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sensor)
+        });
+      }
+      
       fetchData(); 
     } catch(e) {
       alert('Errore durante il salvataggio: ' + e.message);
@@ -147,7 +167,7 @@ function App() {
       setRooms(roomsData);
       setDoors(doorsData);
       
-      setHistory([{ rooms: roomsData, doors: doorsData }]);
+      setHistory([{ rooms: roomsData, doors: doorsData, sensors: sensorsData }]);
       setHistoryIndex(0);
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -163,6 +183,7 @@ function App() {
     });
     setNewFloorName("");
     setFloorDialogOpen(false);
+
     fetchData();
   };
 
@@ -188,16 +209,79 @@ function App() {
     setRoomDialogOpen(false);
   };
 
-  const addDoorWindow = async (type) => {
-    if (!activeFloorId || rooms.filter(r => r.floor_id === activeFloorId).length === 0) {
-       alert("Devi prima creare una stanza."); return;
-    }
-    const defaultRoom = rooms.filter(r => r.floor_id === activeFloorId)[0];
-    const newDoor = {
-       id: `door_${Date.now()}`, room_id: defaultRoom.id, type: type,
-       width: 1, x: defaultRoom.x, y: defaultRoom.y + defaultRoom.height/2, rotation: 0
+  const addDoorWindow = (type) => {
+    if (!activeFloorId || selectedElement?.type !== 'room') return;
+
+    const targetRoomId = selectedElement.id;
+    const targetRoom = rooms.find(r => r.id === targetRoomId);
+    if (!targetRoom) return;
+
+    const width = 1.5;
+    const margin = width / 2;
+    
+    // Function to check overlap
+    const checkOverlap = (px, py, prot) => {
+      const hw = width / 2;
+      const ht = 0.2;
+      const isHorizontal = prot === 0 || prot === 180;
+      const r1 = {
+        left: px - (isHorizontal ? hw : ht), right: px + (isHorizontal ? hw : ht),
+        top: py - (isHorizontal ? ht : hw), bottom: py + (isHorizontal ? ht : hw),
+      };
+      for (const other of doors) {
+        if (other.room_id !== targetRoomId) continue;
+        const otherIsHorizontal = other.rotation === 0 || other.rotation === 180;
+        const hwOther = other.width / 2;
+        const r2 = {
+          left: other.x - (otherIsHorizontal ? hwOther : ht), right: other.x + (otherIsHorizontal ? hwOther : ht),
+          top: other.y - (otherIsHorizontal ? ht : hwOther), bottom: other.y + (otherIsHorizontal ? ht : hwOther),
+        };
+        if (!(r1.left >= r2.right || r1.right <= r2.left || r1.top >= r2.bottom || r1.bottom <= r2.top)) {
+          return true;
+        }
+      }
+      return false;
     };
-    pushToHistory(rooms, [...doors, newDoor]);
+
+    // Generate possible spots around the perimeter
+    const spots = [];
+    const step = 0.5;
+    // Bottom
+    for (let x = targetRoom.x - targetRoom.width/2 + margin; x <= targetRoom.x + targetRoom.width/2 - margin; x += step) spots.push({ x, y: targetRoom.y + targetRoom.height/2, rot: 0 });
+    // Top
+    for (let x = targetRoom.x - targetRoom.width/2 + margin; x <= targetRoom.x + targetRoom.width/2 - margin; x += step) spots.push({ x, y: targetRoom.y - targetRoom.height/2, rot: 180 });
+    // Left
+    for (let y = targetRoom.y - targetRoom.height/2 + margin; y <= targetRoom.y + targetRoom.height/2 - margin; y += step) spots.push({ x: targetRoom.x - targetRoom.width/2, y, rot: -90 });
+    // Right
+    for (let y = targetRoom.y - targetRoom.height/2 + margin; y <= targetRoom.y + targetRoom.height/2 - margin; y += step) spots.push({ x: targetRoom.x + targetRoom.width/2, y, rot: 90 });
+
+    let spawnX = targetRoom.x;
+    let spawnY = targetRoom.y + targetRoom.height / 2;
+    let spawnRot = 0;
+
+    // Find first free spot
+    for (const spot of spots) {
+      if (!checkOverlap(spot.x, spot.y, spot.rot)) {
+        spawnX = spot.x;
+        spawnY = spot.y;
+        spawnRot = spot.rot;
+        break;
+      }
+    }
+
+    const newObj = {
+      id: `${type}_${Date.now()}`,
+      room_id: targetRoomId,
+      type: type,
+      x: spawnX,
+      y: spawnY,
+      width: width,
+      height: 0.2,
+      rotation: spawnRot
+    };
+    
+    pushToHistory(rooms, [...doors, newObj]);
+    setSelectedElement({ type: type, id: newObj.id });
   };
 
   const updateRoomLocal = (id, updates) => {
@@ -223,12 +307,28 @@ function App() {
     if (selectedElement?.id === id) setSelectedElement(null);
   };
 
+  const updateSensorLocal = (id, updates) => {
+    const newSensors = dbSensors.map(s => s.sensor_id === id ? { ...s, ...updates } : s);
+    pushToHistory(rooms, doors, newSensors);
+  };
+
   const updateSensorConfig = async (id, updates) => {
-    await fetch(`${basePath}/api/sensors/${id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
-    fetchData();
+    try {
+      const response = await fetch(`${basePath}/api/sensors/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (response.ok) {
+        setDbSensors(prev => prev.map(s => s.sensor_id === id ? { ...s, ...updates } : s));
+      } else {
+        const errText = await response.text();
+        alert(`Errore aggiornamento sensore: ${response.status} ${errText}`);
+      }
+    } catch (e) {
+      console.error("Errore aggiornamento sensore", e);
+      alert("Errore di rete durante aggiornamento sensore: " + e.message);
+    }
   };
 
   const handleSyncHA = async () => {
@@ -293,7 +393,7 @@ function App() {
              <Typography><b>Batteria:</b> {rtState.battery !== undefined ? `${rtState.battery}%` : 'N/D'}</Typography>
           </Box>
 
-          <Button variant="outlined" color="warning" onClick={() => updateSensorConfig(sensor.sensor_id, {room_id: null})}>
+          <Button variant="outlined" color="warning" onClick={() => updateSensorLocal(sensor.sensor_id, {room_id: null, x: null, y: null})}>
             Rimuovi dalla mappa
           </Button>
         </Box>
@@ -347,8 +447,6 @@ function App() {
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>Struttura</Typography>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Button variant="contained" color="primary" onClick={() => setRoomDialogOpen(true)} disabled={!activeFloorId} startIcon={<MeetingRoomIcon/>}>Aggiungi Stanza</Button>
-                    <Button variant="outlined" color="primary" onClick={() => addDoorWindow('door')} disabled={activeRooms.length === 0} startIcon={<MeetingRoomIcon/>}>Aggiungi Porta</Button>
-                    <Button variant="outlined" color="primary" onClick={() => addDoorWindow('window')} disabled={activeRooms.length === 0} startIcon={<WindowIcon/>}>Aggiungi Finestra</Button>
                   </Box>
                 </Box>
 
@@ -359,7 +457,7 @@ function App() {
                   ) : (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                       {unlinkedSensors.map(s => (
-                        <Button key={s.sensor_id} variant="outlined" color="info" startIcon={<SensorsIcon />} size="small" sx={{ justifyContent: 'flex-start', textTransform: 'none' }} onClick={() => updateSensorConfig(s.sensor_id, { x: 0, y: 0, room_id: activeRooms[0]?.id || '' })}>
+                        <Button key={s.sensor_id} variant="outlined" color="info" startIcon={<SensorsIcon />} size="small" sx={{ justifyContent: 'flex-start', textTransform: 'none' }} onClick={() => updateSensorLocal(s.sensor_id, { x: 0, y: 0, room_id: activeRooms[0]?.id || null })}>
                           {s.friendly_name || s.sensor_id}
                         </Button>
                       ))}
@@ -412,13 +510,36 @@ function App() {
                   zIndex: 1000, display: 'flex', alignItems: 'center', gap: 1, p: '4px 8px', borderRadius: 2,
                   boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
                 }}>
-                  <IconButton disabled={historyIndex <= 0} onClick={undo} color="primary" size="small">
+                  <IconButton disabled={historyIndex <= 0} onClick={undo} color="primary" size="small" title="Annulla">
                     <UndoIcon />
                   </IconButton>
-                  <IconButton disabled={historyIndex >= history.length - 1} onClick={redo} color="primary" size="small">
+                  <IconButton disabled={historyIndex >= history.length - 1} onClick={redo} color="primary" size="small" title="Ripristina">
                     <RedoIcon />
                   </IconButton>
                   <Box sx={{ width: '1px', height: 24, bgcolor: '#ccc', mx: 1 }} />
+                  
+                  {/* Draggable items */}
+                  <IconButton 
+                    onClick={() => addDoorWindow('door')}
+                    disabled={selectedElement?.type !== 'room'}
+                    color="primary"
+                    size="small"
+                    title="Aggiungi Porta alla stanza selezionata"
+                  >
+                    <MeetingRoomIcon />
+                  </IconButton>
+                  <IconButton 
+                    onClick={() => addDoorWindow('window')}
+                    disabled={selectedElement?.type !== 'room'}
+                    color="primary"
+                    size="small"
+                    title="Aggiungi Finestra alla stanza selezionata"
+                  >
+                    <WindowIcon />
+                  </IconButton>
+
+                  <Box sx={{ width: '1px', height: 24, bgcolor: '#ccc', mx: 1 }} />
+                  
                   <Button 
                     variant="contained" 
                     color="primary" 
@@ -439,11 +560,12 @@ function App() {
                   selectedElement={selectedElement}
                   onSelectElement={setSelectedElement}
                   updateRoom={updateRoomLocal}
-                  updateSensorConfig={updateSensorConfig}
+                  updateSensorConfig={updateSensorLocal}
                   updateDoor={updateDoorLocal}
                   deleteRoom={deleteRoomLocal}
                   deleteDoor={deleteDoorLocal}
                   onCameraChange={setCameraZoom}
+                  onDropElement={(type, x, y) => addDoorWindow(type, x, y)}
                 />
                 
                 {(() => {

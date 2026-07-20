@@ -8,7 +8,7 @@ import * as THREE from 'three';
 const WALL_THICKNESS = 0.2;
 const WALL_HEIGHT = 2.5;
 
-export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUpdate, onDelete, setControlsEnabled }) {
+export default function Room3D({ room, allRooms = [], allDoors = [], isSelected, onSelect, onUpdate, onDelete, setControlsEnabled }) {
   const { x, y, width, height, name } = room;
   
   const [hovered, setHovered] = useState(false);
@@ -125,7 +125,11 @@ export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUp
     return { x: newX, y: newY };
   };
 
-  const bind = useDrag(({ first, down, movement: [mx, my], memo }) => {
+  const bind = useDrag(({ tap, first, down, movement: [mx, my], memo }) => {
+    if (tap) {
+      onSelect();
+      return memo;
+    }
     if (first) {
       memo = { x: dragPosRef.current.x, y: dragPosRef.current.y };
     }
@@ -167,20 +171,23 @@ export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUp
     }
     
     return memo;
-  });
+  }, { pointerEvents: true, filterTaps: true });
 
   const bindEvents = bind();
 
   const handlePointerDown = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(false);
-    onSelect();
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(false);
+    }
     if (bindEvents.onPointerDown) bindEvents.onPointerDown(e);
   };
 
   const handlePointerUp = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(true);
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(true);
+    }
     if (bindEvents.onPointerUp) bindEvents.onPointerUp(e);
   };
 
@@ -189,7 +196,7 @@ export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUp
       position={pos} 
       {...bindEvents} 
       onPointerDown={handlePointerDown} 
-      onPointerUp={handlePointerUp} 
+      onPointerUp={handlePointerUp}
       onPointerOver={() => setHovered(true)} 
       onPointerOut={() => setHovered(false)}
     >
@@ -214,23 +221,77 @@ export default function Room3D({ room, allRooms = [], isSelected, onSelect, onUp
         </Text>
       </animated.group>
 
-      {/* Walls (Top, Bottom, Left, Right) - Internal to width/height */}
-      <mesh position={[0, height / 2 - WALL_THICKNESS / 2, WALL_HEIGHT / 2]}>
-        <boxGeometry args={[width, WALL_THICKNESS, WALL_HEIGHT]} />
-        <animated.meshStandardMaterial color={wallColor} />
-      </mesh>
-      <mesh position={[0, -height / 2 + WALL_THICKNESS / 2, WALL_HEIGHT / 2]}>
-        <boxGeometry args={[width, WALL_THICKNESS, WALL_HEIGHT]} />
-        <animated.meshStandardMaterial color={wallColor} />
-      </mesh>
-      <mesh position={[-width / 2 + WALL_THICKNESS / 2, 0, WALL_HEIGHT / 2]}>
-        <boxGeometry args={[WALL_THICKNESS, height - WALL_THICKNESS * 2, WALL_HEIGHT]} />
-        <animated.meshStandardMaterial color={wallColor} />
-      </mesh>
-      <mesh position={[width / 2 - WALL_THICKNESS / 2, 0, WALL_HEIGHT / 2]}>
-        <boxGeometry args={[WALL_THICKNESS, height - WALL_THICKNESS * 2, WALL_HEIGHT]} />
-        <animated.meshStandardMaterial color={wallColor} />
-      </mesh>
+      {/* Walls (Top, Bottom, Left, Right) - Dynamic with holes for doors */}
+      {(() => {
+        const renderWallSegments = (isVertical, fixedPos, startPos, endPos) => {
+          let segments = [[startPos, endPos]];
+          
+          const cuttingDoors = allDoors.filter(d => {
+            const doorLocalX = d.x - room.x;
+            const doorLocalY = room.y - d.y;
+            
+            if (isVertical) {
+              if (Math.abs(doorLocalX - fixedPos) > 0.5) return false;
+              if (doorLocalY + d.width/2 < startPos || doorLocalY - d.width/2 > endPos) return false;
+              return true;
+            } else {
+              if (Math.abs(doorLocalY - fixedPos) > 0.5) return false;
+              if (doorLocalX + d.width/2 < startPos || doorLocalX - d.width/2 > endPos) return false;
+              return true;
+            }
+          });
+
+          cuttingDoors.forEach(d => {
+            const doorLocalX = d.x - room.x;
+            const doorLocalY = room.y - d.y;
+            const dCenter = isVertical ? doorLocalY : doorLocalX;
+            const dHalf = d.width / 2;
+            const cutStart = dCenter - dHalf;
+            const cutEnd = dCenter + dHalf;
+            
+            const newSegments = [];
+            segments.forEach(([segStart, segEnd]) => {
+              if (cutEnd <= segStart || cutStart >= segEnd) {
+                newSegments.push([segStart, segEnd]);
+              } else {
+                if (segStart < cutStart) newSegments.push([segStart, cutStart]);
+                if (segEnd > cutEnd) newSegments.push([cutEnd, segEnd]);
+              }
+            });
+            segments = newSegments;
+          });
+
+          return segments.map((seg, idx) => {
+            const segLength = seg[1] - seg[0];
+            const segCenter = (seg[0] + seg[1]) / 2;
+            
+            if (isVertical) {
+              return (
+                <mesh key={`${isVertical ? 'v' : 'h'}-${fixedPos}-${idx}`} position={[fixedPos, segCenter, WALL_HEIGHT / 2]}>
+                  <boxGeometry args={[WALL_THICKNESS, segLength, WALL_HEIGHT]} />
+                  <animated.meshStandardMaterial color={wallColor} />
+                </mesh>
+              );
+            } else {
+              return (
+                <mesh key={`${isVertical ? 'v' : 'h'}-${fixedPos}-${idx}`} position={[segCenter, fixedPos, WALL_HEIGHT / 2]}>
+                  <boxGeometry args={[segLength, WALL_THICKNESS, WALL_HEIGHT]} />
+                  <animated.meshStandardMaterial color={wallColor} />
+                </mesh>
+              );
+            }
+          });
+        };
+
+        return (
+          <>
+            {renderWallSegments(false, height / 2 - WALL_THICKNESS / 2, -width / 2, width / 2)} {/* Top */}
+            {renderWallSegments(false, -height / 2 + WALL_THICKNESS / 2, -width / 2, width / 2)} {/* Bottom */}
+            {renderWallSegments(true, -width / 2 + WALL_THICKNESS / 2, -height / 2 + WALL_THICKNESS, height / 2 - WALL_THICKNESS)} {/* Left */}
+            {renderWallSegments(true, width / 2 - WALL_THICKNESS / 2, -height / 2 + WALL_THICKNESS, height / 2 - WALL_THICKNESS)} {/* Right */}
+          </>
+        );
+      })()}
     </animated.group>
   );
 }

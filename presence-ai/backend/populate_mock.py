@@ -23,6 +23,8 @@ cursor.execute("INSERT OR REPLACE INTO doors_windows (id, name, room_id, type, x
 
 # Insert Sensors
 cursor.execute("INSERT OR REPLACE INTO sensors (sensor_id, friendly_name, room_id, is_enabled, x, y, fov_angle, heading_angle, max_distance) VALUES ('sensor.soggiorno_presence', 'Sensore Soggiorno', 'soggiorno', 1, 3.0, 2.5, 120, 0, 6.0)")
+cursor.execute("INSERT OR REPLACE INTO sensors (sensor_id, friendly_name, room_id, is_enabled, x, y, fov_angle, heading_angle, max_distance) VALUES ('sensor.cucina_presence', 'Sensore Cucina', NULL, 1, 0.0, 0.0, 120, 0, 6.0)")
+cursor.execute("INSERT OR REPLACE INTO sensors (sensor_id, friendly_name, room_id, is_enabled, x, y, fov_angle, heading_angle, max_distance) VALUES ('sensor.bagno_presence', 'Sensore Bagno', NULL, 1, 0.0, 0.0, 120, 0, 4.0)")
 
 conn.commit()
 conn.close()

@@ -1,5 +1,5 @@
 import React, { Suspense, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { MapControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import Room3D from './Room3D';
@@ -26,7 +26,7 @@ function DashedGrid() {
 }
 
 export default function Map3D({ 
-  rooms, sensors, doors, 
+  rooms = [], sensors = [], doors = [], 
   selectedElement, onSelectElement,
   updateRoom, updateSensorConfig, updateDoor, deleteRoom, deleteDoor,
   onCameraChange
@@ -39,6 +39,16 @@ export default function Map3D({
     }
   }, []);
 
+  React.useEffect(() => {
+    const handleGlobalPointerUp = () => {
+      if (controlsRef.current && !controlsRef.current.enabled) {
+        controlsRef.current.enabled = true;
+      }
+    };
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    return () => window.removeEventListener('pointerup', handleGlobalPointerUp);
+  }, []);
+
   return (
     <div style={{ width: '100%', height: '100%', background: '#f5f5f5' }}>
       <Canvas shadows orthographic camera={{ position: [0, 0, 50], zoom: 50, up: [0, 1, 0] }} onPointerMissed={() => onSelectElement(null)}>
@@ -49,7 +59,7 @@ export default function Map3D({
           enableRotate={false} 
           mouseButtons={{
             LEFT: THREE.MOUSE.PAN, 
-            MIDDLE: THREE.MOUSE.DOLLY,
+            MIDDLE: THREE.MOUSE.PAN,
             RIGHT: THREE.MOUSE.PAN
           }}
           onChange={(e) => onCameraChange && onCameraChange(e.target.object.zoom)}
@@ -69,6 +79,7 @@ export default function Map3D({
               key={room.id} 
               room={room} 
               allRooms={rooms}
+              allDoors={doors}
               isSelected={selectedElement?.id === room.id}
               onSelect={() => onSelectElement({ type: 'room', id: room.id })}
               onUpdate={updateRoom} onDelete={deleteRoom}
@@ -77,20 +88,25 @@ export default function Map3D({
           ))}
 
           {/* Sensors */}
-          {sensors.map(sensor => (
-            <Sensor3D 
-              key={sensor.sensor_id} sensor={sensor} 
-              isSelected={selectedElement?.id === sensor.sensor_id}
-              onSelect={() => onSelectElement({ type: 'sensor', id: sensor.sensor_id })}
-              onUpdate={updateSensorConfig}
-              setControlsEnabled={setControlsEnabled}
-            />
-          ))}
+          {sensors.map(sensor => {
+            const room = rooms.find(r => r.id === sensor.room_id);
+            return (
+              <Sensor3D 
+                key={sensor.sensor_id} sensor={sensor} room={room}
+                isSelected={selectedElement?.id === sensor.sensor_id}
+                onSelect={() => onSelectElement({ type: 'sensor', id: sensor.sensor_id })}
+                onUpdate={updateSensorConfig}
+                setControlsEnabled={setControlsEnabled}
+              />
+            );
+          })}
 
           {/* Doors and Windows */}
           {doors.map(door => (
             <DoorWindow3D 
               key={door.id} item={door} 
+              allRooms={rooms}
+              allDoors={doors}
               isSelected={selectedElement?.id === door.id}
               onSelect={() => onSelectElement({ type: door.type, id: door.id })}
               onUpdate={updateDoor} onDelete={deleteDoor}

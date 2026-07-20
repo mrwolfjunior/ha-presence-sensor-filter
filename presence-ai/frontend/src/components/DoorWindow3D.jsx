@@ -4,56 +4,162 @@ import { useThree } from '@react-three/fiber';
 import { useDrag } from '@use-gesture/react';
 import { Ring } from '@react-three/drei';
 
-export default function DoorWindow3D({ item, isSelected, onSelect, onUpdate, setControlsEnabled }) {
-  const { id, x, y, width, type, rotation } = item;
+export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onSelect, onUpdate, setControlsEnabled }) {
+  const { id, x, y, width, type, rotation, room_id } = item;
 
   const { camera } = useThree();
-  const [localPos, setLocalPos] = useState({ x, y });
+  const [localPos, setLocalPos] = useState({ x, y, rot: rotation });
+  const [isOverlapping, setIsOverlapping] = useState(false);
+
+  const checkOverlap = (px, py, prot) => {
+    if (!allDoors) return false;
+    for (const other of allDoors) {
+      if (other.id === id) continue;
+      
+      const isHorizontal = prot === 0 || prot === 180;
+      const otherIsHorizontal = other.rotation === 0 || other.rotation === 180;
+      
+      const hw = width / 2;
+      const hwOther = other.width / 2;
+      const ht = 0.2; // Thickness threshold
+      
+      const r1 = {
+        left: px - (isHorizontal ? hw : ht),
+        right: px + (isHorizontal ? hw : ht),
+        top: py - (isHorizontal ? ht : hw),
+        bottom: py + (isHorizontal ? ht : hw),
+      };
+      
+      const r2 = {
+        left: other.x - (otherIsHorizontal ? hwOther : ht),
+        right: other.x + (otherIsHorizontal ? hwOther : ht),
+        top: other.y - (otherIsHorizontal ? ht : hwOther),
+        bottom: other.y + (otherIsHorizontal ? ht : hwOther),
+      };
+      
+      // If bounding boxes intersect, return true
+      if (!(r1.left >= r2.right || r1.right <= r2.left || r1.top >= r2.bottom || r1.bottom <= r2.top)) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   useEffect(() => {
-    setLocalPos({ x, y });
-  }, [x, y]);
+    setLocalPos({ x, y, rot: rotation });
+    dragPosRef.current = { x, y };
+  }, [x, y, rotation]);
 
-  const bind = useDrag(({ down, delta: [dx, dy] }) => {
-
-    const worldDx = dx / camera.zoom;
-    const worldDy = dy / camera.zoom;
+  const bind = useDrag(({ tap, first, down, movement: [mx, my], memo }) => {
+    if (tap) {
+      onSelect();
+      return memo;
+    }
+    if (first) {
+      memo = { x: dragPosRef.current.x, y: dragPosRef.current.y };
+    }
     
-    setLocalPos((prev) => {
-      const newX = prev.x + worldDx;
-      const newY = prev.y + worldDy; 
-      if (!down) {
-        onUpdate(id, { x: newX, y: newY });
+    const worldDx = mx / camera.zoom;
+    const worldDy = my / camera.zoom;
+    
+    let newX = memo.x + worldDx;
+    let newY = memo.y + worldDy;
+    let newRot = rotation;
+
+    // Strict Perimeter Snapping to Parent Room
+    if (allRooms && allRooms.length > 0) {
+      const parentRoom = allRooms.find(r => r.id === room_id);
+      if (parentRoom) {
+        const hw = parentRoom.width / 2;
+        const hh = parentRoom.height / 2;
+        
+        // Coordinates of the 4 edges
+        const left = parentRoom.x - hw;
+        const right = parentRoom.x + hw;
+        const top = parentRoom.y - hh;    // Smaller Y means visually higher
+        const bottom = parentRoom.y + hh; // Larger Y means visually lower
+        
+        // Distances from proposed position to each edge
+        const dTop = Math.abs(newY - top);
+        const dBottom = Math.abs(newY - bottom);
+        const dLeft = Math.abs(newX - left);
+        const dRight = Math.abs(newX - right);
+        
+        const minD = Math.min(dTop, dBottom, dLeft, dRight);
+        const margin = width / 2; // Keep door fully inside the wall segment
+
+        if (minD === dTop) {
+          newY = top;
+          newX = Math.max(left + margin, Math.min(right - margin, newX));
+          newRot = 180;
+        } else if (minD === dBottom) {
+          newY = bottom;
+          newX = Math.max(left + margin, Math.min(right - margin, newX));
+          newRot = 0;
+        } else if (minD === dLeft) {
+          newX = left;
+          newY = Math.max(top + margin, Math.min(bottom - margin, newY));
+          newRot = -90;
+        } else {
+          newX = right;
+          newY = Math.max(top + margin, Math.min(bottom - margin, newY));
+          newRot = 90;
+        }
       }
-      return { x: newX, y: newY };
-    });
-  }, { pointerEvents: true });
+    }
+
+    const overlap = checkOverlap(newX, newY, newRot);
+    setIsOverlapping(overlap);
+    setLocalPos({ x: newX, y: newY, rot: newRot });
+
+    if (!down) {
+      if (overlap) {
+        // Revert to original position if dropped on overlap
+        setLocalPos({ x: memo.x, y: memo.y, rot: rotation });
+        setIsOverlapping(false);
+      } else {
+        dragPosRef.current = { x: newX, y: newY };
+        onUpdate(id, { x: newX, y: newY, rotation: newRot });
+      }
+    }
+    
+    return memo;
+  }, { pointerEvents: true, filterTaps: true });
 
   const posX = localPos.x;
   const posY = -localPos.y;
 
-  const rotZ = (rotation * Math.PI) / 180;
+  const rotZ = (localPos.rot * Math.PI) / 180;
   
   const bindEvents = bind();
   
   const handlePointerDown = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(false);
-    onSelect();
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(false);
+    }
     if (bindEvents.onPointerDown) bindEvents.onPointerDown(e);
   };
 
   const handlePointerUp = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(true);
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(true);
+    }
     if (bindEvents.onPointerUp) bindEvents.onPointerUp(e);
   };
 
   const isDoor = type === 'door';
-  const color = isSelected ? '#ff9800' : (isDoor ? '#8d6e63' : '#4fc3f7');
+  const color = isOverlapping ? '#e53935' : (isSelected ? '#ff9800' : (isDoor ? '#8d6e63' : '#4fc3f7'));
 
   return (
-    <group position={[posX, posY, 0.1]} rotation={[0, 0, rotZ]} {...bindEvents} onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
+    <group 
+      position={[posX, posY, 0.1]} 
+      rotation={[0, 0, rotZ]} 
+      {...bindEvents} 
+      onPointerDown={handlePointerDown} 
+      onPointerUp={handlePointerUp}
+    >
       {isDoor ? (
         <group>
           {/* Blueprint Door */}
@@ -63,7 +169,7 @@ export default function DoorWindow3D({ item, isSelected, onSelect, onUpdate, set
             <meshBasicMaterial color={color} />
           </mesh>
           {/* Arc */}
-          <Ring args={[width - 0.05, width + 0.05, 32, 1, 0, Math.PI / 2]} position={[width / 2, 0, 0]} rotation={[0, 0, 0]}>
+          <Ring args={[width - 0.05, width + 0.05, 32, 1, Math.PI / 2, Math.PI / 2]} position={[width / 2, 0, 0]} rotation={[0, 0, 0]}>
             <meshBasicMaterial color={color} side={THREE.DoubleSide} transparent opacity={0.3} />
           </Ring>
           {/* Empty Space Gap */}

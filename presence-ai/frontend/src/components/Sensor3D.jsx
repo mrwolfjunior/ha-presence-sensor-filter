@@ -10,25 +10,94 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
 
   const { camera } = useThree();
   const [localPos, setLocalPos] = useState({ x, y });
+  const [localHeading, setLocalHeading] = useState(heading_angle || 0);
+  const [target] = useState(() => new THREE.Object3D());
+
+  const dragPosRef = React.useRef({ x, y });
 
   useEffect(() => {
+    dragPosRef.current = { x, y };
     setLocalPos({ x, y });
-  }, [x, y]);
+    setLocalHeading(heading_angle || 0);
+  }, [x, y, heading_angle]);
 
-  const bind = useDrag(({ down, delta: [dx, dy] }) => {
+  useEffect(() => {
+    target.position.set(0, -1, 0);
+  }, [target]);
 
-    const worldDx = dx / camera.zoom;
-    const worldDy = dy / camera.zoom;
+  const bind = useDrag(({ tap, first, down, movement: [mx, my], memo }) => {
+    if (tap) {
+      onSelect();
+      return memo;
+    }
+    if (first) {
+      memo = { x: dragPosRef.current.x, y: dragPosRef.current.y, heading: localHeading };
+    }
+
+    const worldDx = mx / camera.zoom;
+    const worldDy = my / camera.zoom;
     
-    setLocalPos((prev) => {
-      const newX = prev.x + worldDx;
-      const newY = prev.y + worldDy; 
-      if (!down) {
-        onUpdate(sensor_id, { x: newX, y: newY });
+    let proposedX = memo.x + worldDx;
+    let proposedY = memo.y + worldDy; 
+
+    let newX = proposedX;
+    let newY = proposedY;
+    let newHeading = localHeading;
+
+    // Snapping logic
+    if (room) {
+      const SNAP_DIST = 0.5;
+      const rx = room.x;
+      const ry = room.y;
+      const rw2 = room.width / 2;
+      const rh2 = room.height / 2;
+
+      const leftEdge = rx - rw2;
+      const rightEdge = rx + rw2;
+      const topEdge = ry - rh2;
+      const bottomEdge = ry + rh2;
+
+      let snapped = false;
+
+      const distLeft = Math.abs(proposedX - leftEdge);
+      const distRight = Math.abs(proposedX - rightEdge);
+      const distTop = Math.abs(proposedY - topEdge);
+      const distBottom = Math.abs(proposedY - bottomEdge);
+
+      const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+
+      if (minDist < SNAP_DIST) {
+        snapped = true;
+        if (minDist === distLeft) {
+           newX = leftEdge + 0.1;
+           newHeading = 90;
+        } else if (minDist === distRight) {
+           newX = rightEdge - 0.1;
+           newHeading = 270;
+        } else if (minDist === distTop) {
+           newY = topEdge + 0.1;
+           newHeading = 0; 
+        } else if (minDist === distBottom) {
+           newY = bottomEdge - 0.1;
+           newHeading = 180;
+        }
       }
-      return { x: newX, y: newY };
-    });
-  }, { pointerEvents: true });
+
+      if (!snapped) {
+         newX = Math.round(proposedX * 2) / 2;
+         newY = Math.round(proposedY * 2) / 2;
+      }
+    }
+
+    setLocalPos({ x: newX, y: newY });
+    setLocalHeading(newHeading);
+
+    if (!down) {
+      dragPosRef.current = { x: proposedX, y: proposedY };
+      onUpdate(sensor_id, { x: newX, y: newY, heading_angle: newHeading });
+    }
+    return memo;
+  }, { filterTaps: true });
 
   const posX = localPos.x;
   const posY = -localPos.y;
@@ -37,39 +106,48 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
   const bindEvents = bind();
 
   const handlePointerDown = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(false);
-    onSelect();
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(false);
+    }
     if (bindEvents.onPointerDown) bindEvents.onPointerDown(e);
   };
 
   const handlePointerUp = (e) => {
-    e.stopPropagation();
-    if (setControlsEnabled) setControlsEnabled(true);
+    if (e.button === 0) {
+      e.stopPropagation();
+      if (setControlsEnabled) setControlsEnabled(true);
+    }
     if (bindEvents.onPointerUp) bindEvents.onPointerUp(e);
   };
 
-  const fovRad = (fov_angle * Math.PI) / 180;
-  const headingRad = (heading_angle * Math.PI) / 180;
-
-  const targetX = posX + Math.sin(headingRad);
-  const targetY = posY - Math.cos(headingRad);
-
-  const target = new THREE.Object3D();
-  target.position.set(targetX, targetY, 0);
+  const fovRad = ((fov_angle || 90) * Math.PI) / 180;
+  const headingRad = ((localHeading || 0) * Math.PI) / 180;
 
   const baseColor = presence ? '#f44336' : '#4caf50';
   const displayColor = isSelected ? '#ff9800' : baseColor;
 
   return (
-    <group position={[posX, posY, posZ]} rotation={[0, 0, rotZ]} {...bindEvents} onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
-      {/* Sensor Body */}
+    <group 
+      position={[posX, posY, posZ]} 
+      rotation={[0, 0, headingRad]} 
+      {...bindEvents} 
+      onPointerDown={handlePointerDown} 
+      onPointerUp={handlePointerUp}
+    >
+      {/* Invisible Drag Target to make it easier to click/drag */}
       <mesh>
-        <cylinderGeometry args={[0.2, 0.2, 0.2, 16]} />
+        <sphereGeometry args={[0.6, 16, 16]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+
+      {/* Half-Moon Sensor Body */}
+      <mesh rotation={[Math.PI/2, 0, 0]}>
+        <cylinderGeometry args={[0.3, 0.3, 0.2, 32, 1, false, -Math.PI/2, Math.PI]} />
         <meshStandardMaterial color={displayColor} roughness={0.3} metalness={0.2} />
       </mesh>
 
-      {/* SpotLight for the Radar Cone */}
+      {/* SpotLight for the Radar Cone (Subtle Floor Illumination) */}
       <spotLight
         color={displayColor}
         intensity={isSelected ? 40.0 : 25.0}
@@ -78,13 +156,6 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
         distance={max_distance * 1.5}
         target={target}
       />
-      
-      {/* Light Cone Visualization */}
-      <mesh position={[0, 0, -0.1]} lookAt={(x,y,z) => target.position}>
-        <cylinderGeometry args={[0.01, Math.tan(fovRad/2) * max_distance, max_distance, 16, 1, true]} />
-        <meshBasicMaterial color={baseColor} transparent opacity={presence ? 0.4 : 0.1} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-
       <primitive object={target} />
     </group>
   );

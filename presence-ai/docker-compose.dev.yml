@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: python:3.11-alpine
+    image: python:3.11-slim
     container_name: presence_ai_backend
     volumes:
       - ./backend:/backend

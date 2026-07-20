@@ -1,53 +1,37 @@
-# TS0601 Advanced Presence Filter per Home Assistant
+# TS0601 Presence Sensor Filter AI (v2.0)
 
-Questa integrazione custom per Home Assistant (installabile tramite HACS) trasforma i tuoi sensori di presenza radar mmWave Tuya TS0601 (collegati tramite Zigbee2MQTT) in un **Motore di Consapevolezza Spaziale Multi-Sensore**, rendendoli estremamente immuni ai falsi positivi e perfetti per l'uso all'interno di un sistema di allarme (come Alarmo).
+Questo Add-on per Home Assistant trasforma i tuoi sensori di presenza radar mmWave Tuya TS0601 (collegati tramite Zigbee2MQTT) in un **Motore di Consapevolezza Spaziale Multi-Sensore con AI**, rendendoli estremamente immuni ai falsi positivi (es. tende, ventilatori, o "ghosting" dietro i muri) e perfetti per l'uso all'interno di un sistema di allarme (come Alarmo).
+
+L'add-on espone un'interfaccia utente web (Ingress) in 3D costruita in React/Three.js per mappare visivamente le tue stanze, e un potente backend Python (FastAPI + Scikit-Learn) che intercetta i messaggi MQTT grezzi.
 
 ## Funzionalità Principali
 
-*   **Finestra di Analisi a 30s**: Il sensore non scatta al primo movimento rilevato. Memorizza un buffer della distanza target nel tempo e valida la traiettoria del movimento. Movimenti casuali, glitch o oggetti statici (come ventilatori) vengono ignorati.
-*   **Wasp-in-a-Box (Modalità Perimetrale)**: Nelle stanze perimetrali (salotti, camere), un ladro non può materializzarsi al centro della stanza. Il rilevamento è valido solo se inizia da specifiche "Entry Zones" configurabili (es. vicino alla porta a 1 metro, o alla finestra a 4 metri) per poi spostarsi.
-*   **Direzionalità**: Sfruttando la derivata nel tempo della distanza, l'integrazione espone negli attributi se la persona è in **Avvicinamento**, **Allontanamento**, o **Stazionaria**.
-*   **Topologia e Handover tra Sensori**: Se colleghi due sensori tra loro, il sistema saprà che una persona che scompare dal bordo del Sensore A è autorizzata a comparire improvvisamente al bordo del Sensore B, bypassando i controlli base per garantire massima fluidità e zero falsi allarmi tra le stanze.
-*   **Auto-Training con Alarmo**: Se l'allarme scatta erroneamente, puoi inviare un feedback (tramite i servizi di HA) indicando che era un falso positivo. L'integrazione estrarrà la distanza a cui è avvenuto il falso allarme e creerà permanentemente una "Zona d'ombra" (Blind Zone) per ignorare futuri movimenti a quella esatta distanza.
+*   **Machine Learning (Auto-Addestrante)**: Classificazione basata su Random Forest per identificare e sopprimere i falsi positivi. I modelli si auto-addestrano individualmente per ogni sensore di notte usando un DB locale (SQLite).
+*   **Multi-Target & Trajectory Tracking**: Invece di limitarsi a sapere se c'è "qualcuno", il motore isola tracciati di distanze contemporanee (algoritmo Nearest Neighbor) calcolandone in real-time la *velocità* (avvicinamento, allontanamento o stazionamento). 
+*   **Topologia 1D Anti-Ghosting**: L'UI ti permette di disegnare la planimetria 3D delle tue stanze. Il backend calcola matematicamente le dimensioni della stanza per invalidare a priori qualsiasi target le cui onde radar siano uscite al di fuori del muro perimetrale.
+*   **Wasp-in-a-Box e Handover**: Gestione avanzata per stanze adiacenti e "porte" virtuali.
+*   **Integrazione Alarmo Nativia**: Nel pannello "Sicurezza e Eventi", l'Add-on legge direttamente gli scatti anomali di Alarmo permettendoti di segnarli visivamente come "Falsi Positivi". Questa azione nutrirà l'AI per impedire che l'evento si ripeta alla stessa distanza/velocità.
+*   **MQTT Discovery**: I sensori filtrati vengono esposti automaticamente su Home Assistant come sensori puliti, pronti all'uso nelle automazioni, senza nessun YAML necessario.
 
-## Installazione
+## Installazione (Add-on Home Assistant)
 
-### Tramite HACS (Consigliato)
-1. Apri HACS nel tuo pannello di Home Assistant.
-2. Vai su **Integrazioni**.
-3. Clicca sui 3 puntini in alto a destra e seleziona **Custom repositories**.
-4. Aggiungi l'URL di questo repository e seleziona la categoria `Integration`.
-5. Clicca su **Scarica** (Download).
-6. Riavvia Home Assistant.
+Questa non è più una Custom Integration (`custom_components`), ma un vero e proprio **Add-on** che gira nel suo container Docker isolato.
 
-### Manuale
-1. Scarica la cartella `custom_components/ts0601_advanced_filter` da questo repository.
-2. Copiala all'interno della cartella `custom_components` della tua installazione di Home Assistant (di solito `/config/custom_components/`).
-3. Riavvia Home Assistant.
+1. Vai su **Impostazioni** -> **Componenti aggiuntivi** -> **Raccolta componenti aggiuntivi**.
+2. Clicca sui 3 puntini in alto a destra e seleziona **Repository**.
+3. Aggiungi l'URL di questo repository su GitHub.
+4. Trova **Presence Sensor Filter AI** e clicca su Install.
+5. Avvia l'Add-on e clicca su **Apri l'interfaccia utente WEB**.
 
-## Configurazione
+La UI si presenterà con una mappa 3D in cui potrai importare i sensori direttamente da Zigbee2MQTT tramite il tasto "Sincronizza HA". 
+Potrai trascinare i muri, definire il FOV (angolo di campo visivo) del radar e abilitare il filtraggio AI. Il resto è gestito magicamente sotto il cofano dal motore Python.
 
-L'integrazione è configurabile completamente tramite l'Interfaccia Utente (UI) di Home Assistant. Non è necessario modificare il `configuration.yaml`.
+### Addestramento dei Modelli (ML)
 
-1. Vai su **Impostazioni** -> **Dispositivi e servizi**.
-2. Clicca su **+ Aggiungi Integrazione** in basso a destra.
-3. Cerca **TS0601 Advanced Presence Filter**.
+L'Add-on raccoglie la telemetria (le distanze e le velocità) all'interno del proprio DB SQLite isolato. I dati non saturano la memoria in quanto c'è un task giornaliero che auto-elimina (TTL) i vecchi record in base allo slider definito nei Settings.
 
-### Parametri di Configurazione
-
-Durante il setup di un sensore, ti verranno richiesti i seguenti dati:
-*   **Source Presence**: L'entità binaria originale esposta da Zigbee2MQTT (es. `binary_sensor.presenza_salotto_occupancy`).
-*   **Source Distance**: L'entità sensore che riporta la distanza del target esposta da Zigbee2MQTT (es. `sensor.presenza_salotto_target_distance`).
-*   **Room Mode**:
-    *   *Perimeter (Perimetrale)*: Usa la logica Wasp-in-a-Box. Le presenze devono iniziare nelle Entry Zones per essere valide.
-    *   *Passage (Passaggio)*: Disabilita il Wasp-in-a-Box. Utile per corridoi.
-*   **Entry Zones**: Range di distanze (in metri) considerati validi come punti d'ingresso per la modalità Perimetrale. Es: `0.0-1.5, 4.0-5.0`.
-*   **Buffer Time**: Il tempo (in secondi) di mantenimento in memoria del buffer di distanza per l'analisi (default 30s).
-
-## Automazioni Consigliate
-
-### Auto-Training con Actionable Notifications e Alarmo
-
-Puoi creare un'automazione che ti invia una notifica sul telefono quando Alarmo scatta a causa di un sensore presenza, permettendoti di segnarlo come Falso Positivo con un pulsante, che richiamerà il servizio `ts0601_advanced_filter.mark_false_positive` passando in pasto il sensore colpevole.
-
-*Dettagli sul setup delle Actionable Notifications sono disponibili nella documentazione ufficiale di Home Assistant.*
+Quando un falso positivo fa scattare erroneamente Alarmo:
+1. Apri la UI dell'Add-on.
+2. Vai nel Tab "Sicurezza".
+3. Clicca la x rossa sul falso evento rilevato.
+4. Alle ore 00:00 (o manualmente) il motore prenderà tutti i falsi positivi, confronterà la telemetria e addestrerà il Random Forest isolando le specifiche feature di quell'evento (es. tende mosse dal vento a 1.2m di distanza con velocità oscillante di 0.3m/s). Da lì in poi non verrà più rilevato come persona.

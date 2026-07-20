@@ -31,9 +31,15 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             target_distance REAL,
             presence BOOLEAN,
-            raw_payload TEXT
+            raw_payload TEXT,
+            is_false_positive BOOLEAN DEFAULT 0
         )
     """)
+    
+    try:
+        cursor.execute("ALTER TABLE sensor_events ADD COLUMN is_false_positive BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     
     # Table for sensor configuration (Calibration & Offset & Enabled status)
     cursor.execute("""
@@ -48,7 +54,8 @@ def init_db():
             fov_angle REAL DEFAULT 120.0,
             heading_angle REAL DEFAULT 0.0,
             max_distance REAL DEFAULT 8.0,
-            last_calibrated_at DATETIME
+            last_calibrated_at DATETIME,
+            psf_friendly_name TEXT
         )
     """)
     
@@ -57,6 +64,10 @@ def init_db():
         cursor.execute("ALTER TABLE sensors ADD COLUMN last_calibrated_at DATETIME")
     except sqlite3.OperationalError:
         pass # Column already exists
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN psf_friendly_name TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     # Table for floors
     cursor.execute("""
@@ -98,6 +109,27 @@ def init_db():
             rotation REAL DEFAULT 0.0
         )
     """)
+
+    # Table for alarmo events
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alarmo_events (
+            id TEXT PRIMARY KEY,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sensor_id TEXT,
+            status TEXT DEFAULT 'unresolved'
+        )
+    """)
+
+    # Global settings table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS global_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    
+    # Insert default retention if not exists
+    cursor.execute("INSERT OR IGNORE INTO global_settings (key, value) VALUES ('db_retention_days', '7')")
 
     # Simple migration if the column doesn't exist
     try:
@@ -258,7 +290,7 @@ def set_sensor_enabled(sensor_id: str, is_enabled: bool):
         finally:
             conn.close()
 
-def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y: float = None, fov_angle: float = None, heading_angle: float = None, max_distance: float = None):
+def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y: float = None, fov_angle: float = None, heading_angle: float = None, max_distance: float = None, psf_friendly_name: str = None):
     with db_lock:
         conn = get_connection()
         try:
@@ -284,6 +316,9 @@ def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y
             if max_distance is not None:
                 updates.append("max_distance = ?")
                 params.append(max_distance)
+            if psf_friendly_name is not None:
+                updates.append("psf_friendly_name = ?")
+                params.append(psf_friendly_name)
                 
             if not updates:
                 return
@@ -430,3 +465,105 @@ def get_recent_events(sensor_id: str, limit: int = 100):
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def insert_alarmo_event(event_id: str, sensor_id: str):
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO alarmo_events (id, sensor_id) VALUES (?, ?)", (event_id, sensor_id))
+        conn.commit()
+        conn.close()
+
+def get_alarmo_events():
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alarmo_events ORDER BY timestamp DESC LIMIT 50")
+        events = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return events
+
+def resolve_alarmo_event(event_id: str, status: str, time_window_seconds: int = 60):
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Get the event first
+        cursor.execute("SELECT timestamp, sensor_id FROM alarmo_events WHERE id=?", (event_id,))
+        event = cursor.fetchone()
+        
+        if event and status == 'false_positive':
+            # Mark recent sensor_events for this sensor as false positives
+            sensor_id = event['sensor_id']
+            event_time = event['timestamp']
+            
+            cursor.execute("""
+                UPDATE sensor_events 
+                SET is_false_positive = 1 
+                WHERE sensor_id = ? 
+                  AND timestamp <= ? 
+                  AND timestamp >= datetime(?, '-' || ? || ' seconds')
+            """, (sensor_id, event_time, event_time, time_window_seconds))
+            
+        cursor.execute("UPDATE alarmo_events SET status=? WHERE id=?", (status, event_id))
+        conn.commit()
+        conn.close()
+
+def clear_sensor_history(sensor_id: str):
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sensor_events WHERE sensor_id=?", (sensor_id,))
+        conn.commit()
+        conn.close()
+
+def get_global_setting(key: str, default: str = "") -> str:
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM global_settings WHERE key=?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row['value'] if row else default
+
+def set_global_setting(key: str, value: str):
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+        conn.close()
+
+def get_db_stats():
+    import os
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM sensor_events")
+        sensor_events_count = cursor.fetchone()['count']
+        cursor.execute("SELECT COUNT(*) as count FROM alarmo_events")
+        alarmo_events_count = cursor.fetchone()['count']
+        conn.close()
+        
+    db_size_mb = 0
+    if os.path.exists(DB_PATH):
+        db_size_mb = os.path.getsize(DB_PATH) / (1024 * 1024)
+        
+    return {
+        "db_size_mb": round(db_size_mb, 2),
+        "sensor_events_count": sensor_events_count,
+        "alarmo_events_count": alarmo_events_count,
+        "db_retention_days": int(get_global_setting("db_retention_days", "7"))
+    }
+
+def cleanup_old_telemetry():
+    days = int(get_global_setting("db_retention_days", "7"))
+    with db_lock:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"DELETE FROM sensor_events WHERE timestamp <= datetime('now', '-{days} days')")
+        cursor.execute(f"DELETE FROM alarmo_events WHERE timestamp <= datetime('now', '-{days} days')")
+        conn.commit()
+        # Optimize DB
+        cursor.execute("VACUUM")
+        conn.close()

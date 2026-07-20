@@ -11,9 +11,16 @@ from db import (
     init_db, insert_sensor_event, upsert_sensor, is_sensor_enabled, 
     get_all_sensors, set_sensor_enabled, update_sensor_config,
     update_sensor_calibration_time,
+    insert_alarmo_event, get_alarmo_events, resolve_alarmo_event,
     get_floors, upsert_floor, delete_floor,
     get_rooms, upsert_room, delete_room,
-    get_doors_windows, upsert_door_window, delete_door_window
+    get_doors_windows, upsert_door_window, delete_door_window,
+    clear_sensor_history, cleanup_old_telemetry,
+    get_db_stats, set_global_setting, get_all_sensors
+)
+from ml_pipeline import (
+    TargetTracker, apply_topological_filter_1d, 
+    predict_presence, train_sensor_model
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,22 +36,49 @@ main_loop = None
 active_calibrations = {}
 latest_payloads = {}
 
+async def db_ttl_task():
+    while True:
+        try:
+            # Delete data older than retention limit
+            cleanup_old_telemetry()
+            logger.info("Executed daily telemetry TTL cleanup.")
+            
+            # Auto-train models for all sensors nightly
+            sensors = get_all_sensors()
+            for s in sensors:
+                if s.get('is_enabled'):
+                    logger.info(f"Auto-training ML model for {s['sensor_id']}...")
+                    train_sensor_model(s['sensor_id'])
+            
+        except Exception as e:
+            logger.error(f"TTL cleanup or ML training failed: {e}")
+        # Run once a day
+        await asyncio.sleep(24 * 3600)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global main_loop
     main_loop = asyncio.get_running_loop()
     # Startup
     init_db()
+    mqtt_client.on_connect = on_connect
+    mqtt_client.on_message = on_message
+    
     try:
         mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
-        mqtt_client.loop_start()
+        import threading
+        mqtt_thread = threading.Thread(target=mqtt_client.loop_forever, daemon=True)
+        mqtt_thread.start()
     except Exception as e:
         logger.error(f"Failed to connect to MQTT: {e}")
+        
+    # Start background TTL task
+    ttl_task = asyncio.create_task(db_ttl_task())
     
     yield
     
     # Shutdown
-    mqtt_client.loop_stop()
+    ttl_task.cancel()
     mqtt_client.disconnect()
 
 app = FastAPI(title="Presence Sensor Filter AI Backend", lifespan=lifespan)
@@ -91,14 +125,49 @@ mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 # State management
 connected_websockets = []
 sensor_buffers = defaultdict(lambda: deque(maxlen=100))
+sensor_trackers = defaultdict(TargetTracker)
 known_sensors_cache = set()
+
+def publish_discovery(sensor_id: str):
+    # Fetch sensor info to get the friendly name and enabled status
+    sensors = get_all_sensors()
+    sensor_info = next((s for s in sensors if s['sensor_id'] == sensor_id), None)
+    
+    if not sensor_info:
+        return
+        
+    is_enabled = bool(sensor_info['is_enabled'])
+    friendly_name = sensor_info.get('psf_friendly_name') or f"PSF {sensor_info.get('friendly_name', sensor_id)}"
+    
+    discovery_topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/presence_ai_{sensor_id}/config"
+    state_topic = f"presence_ai/virtual/psf_{sensor_id}/state"
+    
+    if is_enabled:
+        payload = {
+            "name": friendly_name,
+            "state_topic": state_topic,
+            "payload_on": "ON",
+            "payload_off": "OFF",
+            "device_class": "occupancy",
+            "unique_id": f"presence_ai_{sensor_id}",
+            "device": {
+                "identifiers": [f"presence_ai_{sensor_id}"],
+                "name": "Presence AI Filter",
+                "manufacturer": "Presence AI",
+                "model": "Virtual Sensor"
+            }
+        }
+        mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
+    else:
+        # Publish empty payload to remove the entity from HA
+        mqtt_client.publish(discovery_topic, "", retain=True)
 
 async def broadcast_websocket(message: dict):
     for connection in connected_websockets:
         try:
             await connection.send_json(message)
         except Exception:
-            pass
+            print(f"Subscribed to topic: {MQTT_BASE_TOPIC}/+")
 
 def publish_discovery(sensor_id: str):
     """Publish Home Assistant MQTT Discovery payload for the filtered sensor."""
@@ -200,14 +269,39 @@ def on_message(client, userdata, msg):
             # Data Ingestion
             insert_sensor_event(sensor_id, distance, presence, payload)
             
-            # Add to memory buffer for ML / Heuristics
-            sensor_buffers[sensor_id].append(distance)
+            # Determine which room the sensor is in
+            sensors = get_all_sensors()
+            sensor_info = next((s for s in sensors if s['sensor_id'] == sensor_id), None)
             
-            # TODO: Run ML inference here on sensor_buffers[sensor_id]
-            is_valid_human = presence # Placeholder
+            rooms = get_rooms()
+            room_info = None
+            if sensor_info and sensor_info.get("room_id"):
+                room_info = next((r for r in rooms if r['id'] == sensor_info['room_id']), None)
+                
+            # If distance exceeds topological bounds, skip ML and force false
+            if not apply_topological_filter_1d(distance, sensor_info, room_info):
+                is_valid_human = False
+            else:
+                # 1. Update Target Tracker
+                # Check if multiple targets in payload (e.g. moving_target_distance, static_target_distance)
+                distances_in_payload = []
+                if "moving_target_distance" in payload: distances_in_payload.append(payload["moving_target_distance"])
+                if "static_target_distance" in payload: distances_in_payload.append(payload["static_target_distance"])
+                if not distances_in_payload and distance > 0:
+                    distances_in_payload.append(distance)
+                    
+                tracker = sensor_trackers[sensor_id]
+                active_tracks = tracker.update(distances_in_payload)
+                
+                # 2. Run ML inference on all active tracks
+                is_valid_human = False
+                for track in active_tracks:
+                    if predict_presence(sensor_id, track):
+                        is_valid_human = True
+                        break # Logic OR: one human is enough
             
-            state_topic = f"presence_ai/sensor/{sensor_id}/state"
-            client.publish(state_topic, "ON" if is_valid_human else "OFF")
+            state_topic = f"presence_ai/virtual/psf_{sensor_id}/state"
+            mqtt_client.publish(state_topic, "ON" if is_valid_human else "OFF")
             
             # Publish Discovery for enabled sensors
             publish_discovery(sensor_id)
@@ -250,6 +344,11 @@ async def calibrate_start(action: CalibrateAction):
         
     active_calibrations[sensor_id]['step'] = step
     active_calibrations[sensor_id]['buffer'] = []
+    
+    # Calibration invalidates previous physical location/offset data. Clear history!
+    if step == 'empty_room':
+        clear_sensor_history(sensor_id)
+        
     return {"status": "success"}
 
 @app.post("/api/calibrate/stop")
@@ -363,23 +462,47 @@ async def get_sensors_list():
     return get_all_sensors()
 
 class SensorConfig(BaseModel):
-    is_enabled: Optional[bool] = None
     room_id: Optional[str] = None
     x: Optional[float] = None
     y: Optional[float] = None
     fov_angle: Optional[float] = None
     heading_angle: Optional[float] = None
     max_distance: Optional[float] = None
+    is_enabled: Optional[bool] = None
+    psf_friendly_name: Optional[str] = None
+
+@app.post("/api/sensors/{sensor_id}/enable")
+async def enable_sensor(sensor_id: str, enabled: bool):
+    set_sensor_enabled(sensor_id, enabled)
+    publish_discovery(sensor_id)
+    return {"status": "success", "enabled": enabled}
+
+@app.post("/api/sensors/{sensor_id}/config")
+async def save_sensor_config(sensor_id: str, config: dict):
+    update_sensor_config(
+        sensor_id, 
+        config.get("x", 0.0), 
+        config.get("y", 0.0), 
+        config.get("fov_angle", 120.0), 
+        config.get("heading_angle", 0.0),
+        config.get("max_distance", 8.0),
+        config.get("psf_friendly_name")
+    )
+    # Refresh discovery if friendly name changed
+    publish_discovery(sensor_id)
+    return {"status": "success"}
 
 @app.post("/api/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, config: SensorConfig):
     try:
-        if config.is_enabled is not None:
-            set_sensor_enabled(sensor_id, config.is_enabled)
+        from db import update_sensor_config, set_sensor_enabled
         update_sensor_config(
             sensor_id, config.room_id, config.x, config.y, 
-            config.fov_angle, config.heading_angle, config.max_distance
+            config.fov_angle, config.heading_angle, config.max_distance, config.psf_friendly_name
         )
+        if config.is_enabled is not None:
+            set_sensor_enabled(sensor_id, config.is_enabled)
+        publish_discovery(sensor_id)
         return {"status": "success"}
     except Exception as e:
         import traceback
@@ -458,10 +581,55 @@ async def api_delete_door(item_id: str):
     delete_door_window(item_id)
     return {"status": "success"}
 
+# --- Alarmo & Events API ---
+import uuid
+
+@app.post("/api/alarmo/trigger")
+async def alarmo_trigger(request: Request):
+    try:
+        data = await request.json()
+        sensor_id = data.get("sensor_id", "unknown")
+        # Generate unique event ID
+        event_id = str(uuid.uuid4())
+        insert_alarmo_event(event_id, sensor_id)
+        return {"status": "success", "event_id": event_id}
+    except Exception as e:
+        logger.error(f"Alarmo trigger error: {e}")
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+@app.get("/api/alarmo/events")
+async def api_get_alarmo_events():
+    return get_alarmo_events()
+
+@app.post("/api/alarmo/events/{event_id}/resolve")
+async def api_resolve_alarmo_event(event_id: str, request: Request):
+    data = await request.json()
+    status = data.get("status")
+    if status not in ["false_positive", "true_positive"]:
+        return JSONResponse(status_code=400, content={"error": "Invalid status"})
+    
+    resolve_alarmo_event(event_id, status)
+    return {"status": "success"}
+
 @app.post("/api/reset_topology")
 async def api_reset_topology():
     from db import reset_topology
     reset_topology()
+    return {"status": "success"}
+
+# --- System API ---
+class SystemSettings(BaseModel):
+    db_retention_days: int
+
+@app.get("/api/system/status")
+async def api_get_system_status():
+    return get_db_stats()
+
+@app.post("/api/system/settings")
+async def api_set_system_settings(settings: SystemSettings):
+    set_global_setting("db_retention_days", str(settings.db_retention_days))
+    # Esegui la pulizia immediata dei dati più vecchi
+    cleanup_old_telemetry()
     return {"status": "success"}
 
 class SyncTopologyPayload(BaseModel):

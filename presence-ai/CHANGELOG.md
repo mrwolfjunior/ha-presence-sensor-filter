@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0
+- **Machine Learning Engine**: Integrato modulo Python backend basato su Scikit-Learn per l'auto-apprendimento e il riconoscimento dei falsi positivi.
+- **Multi-Target Tracking**: Aggiunto algoritmo *Nearest Neighbor* per distinguere tracciati multipli contemporanei generati da payload MQTT composti.
+- **Traiettoria 1D**: Calcolo matematico in real-time della derivata spazio/tempo per identificare la velocità e differenziare target stazionari, in avvicinamento o in allontanamento.
+- **Filtro Topologico 1D**: Il sistema calcola dinamicamente le distanze massime (ghosting) utilizzando le proporzioni della mappa 3D per "tagliare" le onde radio che escono dai muri fisici.
+- **Auto-Training**: Modelli Random Forest auto-addestrati ogni notte su base individuale per ogni sensore, in base agli eventi registrati su SQLite e classificati tramite l'interfaccia UI.
+- **Integrazione Alarmo**: Nuova Dashboard React per revisionare visivamente gli allarmi Home Assistant e marcare i target specifici come "falsi positivi" per addestrare il modello ML.
+- **Gestione Memoria DB**: Introdotto uno slider visivo per la Data Retention (da 1 a 365 giorni), che auto-cancella vecchie telemetrie e ottimizza il database locale tramite VACUUM per i dispositivi embedded.
+- **Architettura**: Transizione completa in Add-on multi-container (FastAPI Backend + React Three.js Frontend + SQLite + Mosquitto).
 ## 1.2.0
 - UX: Implementato lo Zoom & Pan per la Blueprint.
 - UX: Aggiunta scala di misura (metri) in sovrimpressione.

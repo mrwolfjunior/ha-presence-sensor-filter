@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Box, Drawer, Button, Typography, TextField, FormControl, InputLabel, 
   Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper, Tooltip,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  Grid, Slider
 } from '@mui/material';
 import MapIcon from '@mui/icons-material/Map';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -14,6 +15,7 @@ import HomeIcon from '@mui/icons-material/Home';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import InfoIcon from '@mui/icons-material/Info';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
+import SecurityIcon from '@mui/icons-material/Security';
 import UndoIcon from '@mui/icons-material/Undo';
 import RedoIcon from '@mui/icons-material/Redo';
 import SaveIcon from '@mui/icons-material/Save';
@@ -24,6 +26,7 @@ import DialogActions from '@mui/material/DialogActions';
 import './index.css';
 import Map3D from './components/Map3D';
 import CalibrationWizard from './components/CalibrationWizard';
+import AlarmReviewPanel from './components/AlarmReviewPanel';
 
 const basePath = window.location.pathname.replace(/\/$/, "");
 
@@ -203,6 +206,33 @@ function App() {
       setActiveFloorId(floors[0].id);
     }
   }, [floors, activeFloorId]);
+
+  const [systemStatus, setSystemStatus] = useState(null);
+  const [pendingRetention, setPendingRetention] = useState(7);
+
+  const fetchSystemStatus = async () => {
+    try {
+      const res = await fetch(`${basePath}/api/system/status`);
+      const data = await res.json();
+      setSystemStatus(data);
+      setPendingRetention(data.db_retention_days);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const updateDbRetention = async (days) => {
+    try {
+      await fetch(`${basePath}/api/system/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db_retention_days: days })
+      });
+      fetchSystemStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -458,6 +488,22 @@ function App() {
     } catch (e) {
       console.error("Errore aggiornamento sensore", e);
       alert("Errore di rete durante aggiornamento sensore: " + e.message);
+    }
+  };
+
+  useEffect(() => {
+    if (settingsSection === 'ml') {
+      fetchSystemStatus();
+    }
+  }, [settingsSection]);
+
+  const handleDeviceAdd = async (friendly_name, is_door) => {
+    try {
+      await fetch(`${basePath}/api/sync_ha`, { method: 'POST' });
+      alert("Sincronizzazione Home Assistant avviata");
+      fetchData();
+    } catch (error) {
+      alert("Errore durante la sincronizzazione: " + error.message);
     }
   };
 
@@ -743,9 +789,12 @@ function App() {
               <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Button variant={settingsSection === 'status' ? 'contained' : 'text'} color={settingsSection === 'status' ? 'primary' : 'inherit'} sx={{ justifyContent: 'flex-start' }} startIcon={<InfoIcon />} onClick={() => setSettingsSection('status')}>
                   Status Sistema
-                </Button>
+                </Button>                
                 <Button variant={settingsSection === 'devices' ? 'contained' : 'text'} color={settingsSection === 'devices' ? 'primary' : 'inherit'} sx={{ justifyContent: 'flex-start' }} startIcon={<SensorsIcon />} onClick={() => setSettingsSection('devices')}>
-                  Gestione Dispositivi
+                  Dispositivi
+                </Button>
+                <Button variant={settingsSection === 'security' ? 'contained' : 'text'} color={settingsSection === 'security' ? 'primary' : 'inherit'} sx={{ justifyContent: 'flex-start' }} startIcon={<SecurityIcon />} onClick={() => setSettingsSection('security')}>
+                  Sicurezza & Allarmi
                 </Button>
                 <Button variant={settingsSection === 'ml' ? 'contained' : 'text'} color={settingsSection === 'ml' ? 'primary' : 'inherit'} sx={{ justifyContent: 'flex-start' }} startIcon={<AnalyticsIcon />} onClick={() => setSettingsSection('ml')}>
                   Statistiche ML
@@ -999,6 +1048,20 @@ function App() {
                               <ListItemText primary={sensor.friendly_name || sensor.sensor_id} secondary={`ID: ${sensor.sensor_id}`} />
                               <Switch edge="end" onChange={(e) => updateSensorConfig(sensor.sensor_id, {is_enabled: e.target.checked})} checked={sensor.is_enabled === 1 || sensor.is_enabled === true} />
                             </Box>
+                            {(sensor.is_enabled === 1 || sensor.is_enabled === true) && (
+                              <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+                                <TextField 
+                                  size="small" 
+                                  label="Nome Sensore Virtuale (HA)" 
+                                  defaultValue={sensor.psf_friendly_name || `PSF ${sensor.friendly_name || sensor.sensor_id}`}
+                                  onBlur={(e) => updateSensorConfig(sensor.sensor_id, {psf_friendly_name: e.target.value})}
+                                  fullWidth
+                                />
+                                <Tooltip title="Questo è il nome con cui il sensore ripulito apparirà in Home Assistant tramite l'MQTT Discovery.">
+                                  <InfoIcon color="action" />
+                                </Tooltip>
+                              </Box>
+                            )}
                           </ListItem>
                         ))}
                       </List>
@@ -1009,13 +1072,72 @@ function App() {
               {settingsSection === 'ml' && (
                 <Box sx={{ width: '100%', maxWidth: 800 }}>
                   <Typography variant="h4" gutterBottom fontWeight="bold" color="primary">Statistiche Machine Learning</Typography>
-                  <Card elevation={0} sx={{ border: '1px solid #eee', maxWidth: 800, p: 4, textAlign: 'center' }}>
-                    <AnalyticsIcon sx={{ fontSize: 60, color: '#ccc', mb: 2 }} />
-                    <Typography variant="h6" color="text.secondary">Modulo ML non ancora addestrato</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      Il sistema sta raccogliendo i dati sulle transizioni porta/sensore per valutare i falsi positivi. I modelli saranno disponibili dopo 24h di raccolta dati.
-                    </Typography>
+                  <Card elevation={0} sx={{ border: '1px solid #eee', maxWidth: 800, p: 4 }}>
+                    <Typography variant="h6" gutterBottom>Stato del Database e Manutenzione</Typography>
+                    
+                    {systemStatus ? (
+                      <Box sx={{ mt: 3, mb: 4 }}>
+                        <Grid container spacing={3}>
+                          <Grid item xs={4}>
+                            <Typography color="text.secondary" variant="body2">Dimensione DB</Typography>
+                            <Typography variant="h5">{systemStatus.db_size_mb} MB</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography color="text.secondary" variant="body2">Eventi Sensori (Memoria)</Typography>
+                            <Typography variant="h5">{systemStatus.sensor_events_count}</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography color="text.secondary" variant="body2">Allarmi Registrati</Typography>
+                            <Typography variant="h5">{systemStatus.alarmo_events_count}</Typography>
+                          </Grid>
+                        </Grid>
+
+                        <Box sx={{ mt: 5 }}>
+                          <Typography variant="subtitle1" gutterBottom>
+                            Ritenzione Dati Telemetria (Giorni)
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" paragraph>
+                            I dati più vecchi di questo limite verranno eliminati automaticamente ogni notte per non saturare la memoria. I modelli ML verranno riaddestrati giornalmente.
+                          </Typography>
+                          <Slider
+                            value={pendingRetention}
+                            min={1}
+                            max={365}
+                            step={1}
+                            marks={[
+                              { value: 1, label: '1g' },
+                              { value: 30, label: '1m' },
+                              { value: 180, label: '6m' },
+                              { value: 365, label: '1a' }
+                            ]}
+                            onChange={(e, val) => setPendingRetention(val)}
+                            valueLabelDisplay="auto"
+                          />
+                          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                            <Button 
+                              variant="contained" 
+                              color="primary" 
+                              startIcon={<SaveIcon />}
+                              onClick={() => updateDbRetention(pendingRetention)}
+                            >
+                              Salva ed Esegui Pulizia
+                            </Button>
+                          </Box>
+                        </Box>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">Caricamento stato database...</Typography>
+                    )}
                   </Card>
+                </Box>
+              )}
+              {settingsSection === 'security' && (
+                <Box sx={{ width: '100%', maxWidth: 1000 }}>
+                  <Typography variant="h4" gutterBottom fontWeight="bold" color="primary">Sicurezza e Eventi Alarmo</Typography>
+                  <Typography variant="body1" color="text.secondary" paragraph>
+                    Da qui puoi revisionare gli allarmi scattati in Home Assistant e segnalare eventuali falsi positivi per addestrare i Sensori Virtuali PSF a ignorarli in futuro.
+                  </Typography>
+                  <AlarmReviewPanel basePath={basePath} />
                 </Box>
               )}
             </Box>

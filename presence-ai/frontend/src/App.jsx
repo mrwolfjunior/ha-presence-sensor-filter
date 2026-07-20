@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Box, Drawer, Button, Typography, TextField, FormControl, InputLabel, 
-  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper
+  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper, Tooltip
 } from '@mui/material';
 import MapIcon from '@mui/icons-material/Map';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -22,6 +22,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import './index.css';
 import Map3D from './components/Map3D';
+import CalibrationWizard from './components/CalibrationWizard';
 
 const basePath = window.location.pathname.replace(/\/$/, "");
 
@@ -89,64 +90,81 @@ function App() {
   const [cameraZoom, setCameraZoom] = useState(50);
   const [connected, setConnected] = useState(false);
 
+  // --- Calibration Wizard State ---
+  const [calibrationWizardOpen, setCalibrationWizardOpen] = useState(false);
+  const [calibrationRoom, setCalibrationRoom] = useState(null);
+  const [calibrationSensor, setCalibrationSensor] = useState(null);
+
   // --- Topology History State ---
-  const [history, setHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [historyState, setHistoryState] = useState({ entries: [], index: -1 });
 
   const pushToHistory = (newRooms, newDoors, newSensors = dbSensors) => {
-    const current = history[historyIndex];
-    if (current && 
-        JSON.stringify(current.rooms) === JSON.stringify(newRooms) &&
-        JSON.stringify(current.doors) === JSON.stringify(newDoors) &&
-        JSON.stringify(current.sensors) === JSON.stringify(newSensors)) {
-      return;
-    }
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ rooms: newRooms, doors: newDoors, sensors: newSensors });
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
+    setHistoryState(prev => {
+      const current = prev.entries[prev.index];
+      if (current && 
+          JSON.stringify(current.rooms) === JSON.stringify(newRooms) &&
+          JSON.stringify(current.doors) === JSON.stringify(newDoors) &&
+          JSON.stringify(current.sensors) === JSON.stringify(newSensors)) {
+        return prev;
+      }
+      const newEntries = prev.entries.slice(0, prev.index + 1);
+      newEntries.push({ rooms: newRooms, doors: newDoors, sensors: newSensors });
+      return { entries: newEntries, index: newEntries.length - 1 };
+    });
     setRooms(newRooms);
     setDoors(newDoors);
     setDbSensors(newSensors);
   };
 
   const undo = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      setRooms(history[newIndex].rooms);
-      setDoors(history[newIndex].doors);
-      setDbSensors(history[newIndex].sensors);
+    if (historyState.index > 0) {
+      const newIndex = historyState.index - 1;
+      const state = historyState.entries[newIndex];
+      setHistoryState(prev => ({ ...prev, index: newIndex }));
+      setRooms(state.rooms);
+      setDoors(state.doors);
+      setDbSensors(state.sensors);
+      setSelectedElement(null);
     }
   };
 
   const redo = () => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      setRooms(history[newIndex].rooms);
-      setDoors(history[newIndex].doors);
-      setDbSensors(history[newIndex].sensors);
+    if (historyState.index < historyState.entries.length - 1) {
+      const newIndex = historyState.index + 1;
+      const state = historyState.entries[newIndex];
+      setHistoryState(prev => ({ ...prev, index: newIndex }));
+      setRooms(state.rooms);
+      setDoors(state.doors);
+      setDbSensors(state.sensors);
+      setSelectedElement(null);
     }
   };
 
   const saveTopology = async () => {
-    const current = history[historyIndex];
+    const current = historyState.entries[historyState.index];
     if (!current) return;
     try {
-      await fetch(`${basePath}/api/topology/sync`, {
+      const topoRes = await fetch(`${basePath}/api/topology/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rooms: current.rooms, doors: current.doors })
       });
+      if (!topoRes.ok) {
+        const text = await topoRes.text();
+        throw new Error("Topology sync failed: " + text);
+      }
       
       // Save sensors
       for (const sensor of current.sensors) {
-        await fetch(`${basePath}/api/sensors/${encodeURIComponent(sensor.sensor_id)}`, {
+        const sensorRes = await fetch(`${basePath}/api/sensors/${encodeURIComponent(sensor.sensor_id)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(sensor)
         });
+        if (!sensorRes.ok) {
+          const text = await sensorRes.text();
+          throw new Error("Sensor " + sensor.sensor_id + " save failed: " + text);
+        }
       }
       
       fetchData(); 
@@ -203,8 +221,7 @@ function App() {
       setRooms(roomsData);
       setDoors(doorsData);
       
-      setHistory([{ rooms: roomsData, doors: doorsData, sensors: sensorsData }]);
-      setHistoryIndex(0);
+      setHistoryState({ entries: [{ rooms: roomsData, doors: doorsData, sensors: sensorsData }], index: 0 });
     } catch (error) {
       console.error("Error fetching data:", error);
     }
@@ -309,11 +326,16 @@ function App() {
       id: `${type}_${Date.now()}`,
       room_id: targetRoomId,
       type: type,
+      name: type === 'door' ? 'Nuova Porta' : 'Nuova Finestra',
       x: spawnX,
       y: spawnY,
       width: width,
       height: 0.2,
-      rotation: spawnRot
+      rotation: spawnRot,
+      is_magnetic: false,
+      sensor_id: '',
+      ha_entity_id: '',
+      target_room_id: ''
     };
     
     pushToHistory(rooms, [...doors, newObj]);
@@ -363,8 +385,11 @@ function App() {
   };
 
   const updateDoorLocal = (id, updates) => {
-    const newDoors = doors.map(d => d.id === id ? { ...d, ...updates } : d);
-    pushToHistory(rooms, newDoors);
+    setDoors(prevDoors => {
+      const newDoors = prevDoors.map(d => d.id === id ? { ...d, ...updates } : d);
+      pushToHistory(rooms, newDoors);
+      return newDoors;
+    });
   };
 
   const deleteDoorLocal = (id) => {
@@ -406,11 +431,14 @@ function App() {
   };
 
   const updateSensorLocal = (id, updates) => {
-    const newSensors = dbSensors.map(s => s.sensor_id === id ? { ...s, ...updates } : s);
-    pushToHistory(rooms, doors, newSensors);
-    if (updates.room_id === null && selectedElement?.id === id) {
-      setSelectedElement(null);
-    }
+    setDbSensors(prevSensors => {
+      const newSensors = prevSensors.map(s => s.sensor_id === id ? { ...s, ...updates } : s);
+      pushToHistory(rooms, doors, newSensors);
+      if (updates.room_id === null && selectedElement?.id === id) {
+        setSelectedElement(null);
+      }
+      return newSensors;
+    });
   };
 
   const updateSensorConfig = async (id, updates) => {
@@ -512,6 +540,33 @@ function App() {
           <DimensionInput label="Larghezza (m)" value={room.width} onChange={(val) => updateRoomLocal(room.id, {width: val})} />
           <DimensionInput label="Lunghezza (m)" value={room.height} onChange={(val) => updateRoomLocal(room.id, {height: val})} />
           
+          <FormControl size="small" fullWidth>
+            <InputLabel>Materiale Muri</InputLabel>
+            <Select 
+              value={room.wall_material || 'mattone'} 
+              label="Materiale Muri" 
+              onChange={(e) => updateRoomLocal(room.id, {wall_material: e.target.value})}
+            >
+              <MenuItem value="mattone">Mattone (Default)</MenuItem>
+              <MenuItem value="cartongesso">Cartongesso</MenuItem>
+              <MenuItem value="cemento">Cemento Armato</MenuItem>
+            </Select>
+          </FormControl>
+          
+          <Button 
+            variant="contained" 
+            color="secondary" 
+            disabled={roomSensors.length === 0}
+            onClick={() => {
+              setCalibrationRoom(room);
+              // Pre-select first sensor if available
+              setCalibrationSensor(roomSensors.length > 0 ? roomSensors[0] : null);
+              setCalibrationWizardOpen(true);
+            }}
+          >
+            Avvia Calibrazione IA
+          </Button>
+          
           <Divider sx={{ my: 1 }} />
           <Typography variant="subtitle2" fontWeight="bold">Entità Collegate</Typography>
           
@@ -604,6 +659,13 @@ function App() {
          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Typography variant="h6">{door.type === 'window' ? 'Finestra' : 'Porta'}</Typography>
           <DimensionInput label="Larghezza (m)" value={door.width} onChange={(val) => updateDoorLocal(door.id, {width: val})} />
+          <TextField 
+            label="HA Entity ID" 
+            size="small" 
+            value={door.sensor_id || ''} 
+            onChange={(e) => updateDoorLocal(door.id, {sensor_id: e.target.value})} 
+            placeholder="es. binary_sensor.door_contact"
+          />
           <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => deleteDoorLocal(door.id)}>Elimina</Button>
         </Box>
       );
@@ -707,12 +769,20 @@ function App() {
                   zIndex: 1000, display: 'flex', alignItems: 'center', gap: 1, p: '4px 8px', borderRadius: 2,
                   boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
                 }}>
-                  <IconButton disabled={historyIndex <= 0} onClick={undo} color="primary" size="small" title="Annulla">
-                    <UndoIcon />
-                  </IconButton>
-                  <IconButton disabled={historyIndex >= history.length - 1} onClick={redo} color="primary" size="small" title="Ripristina">
-                    <RedoIcon />
-                  </IconButton>
+                  <Tooltip title="Annulla">
+                    <span>
+                      <IconButton onClick={undo} disabled={historyState.index <= 0} color="inherit">
+                        <UndoIcon />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Ripeti">
+                    <span>
+                      <IconButton onClick={redo} disabled={historyState.index >= historyState.entries.length - 1} color="inherit">
+                        <RedoIcon />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Box sx={{ width: '1px', height: 24, bgcolor: '#ccc', mx: 1 }} />
                   
                   {/* Draggable items */}
@@ -743,7 +813,7 @@ function App() {
                     size="small" 
                     startIcon={<SaveIcon />} 
                     onClick={saveTopology}
-                    disabled={historyIndex <= 0} 
+                    disabled={historyState.index <= 0} 
                     sx={{ textTransform: 'none', fontWeight: 'bold' }}
                   >
                     Salva Modifiche
@@ -897,6 +967,17 @@ function App() {
             <Button onClick={addRoom}>Aggiungi</Button>
           </DialogActions>
         </Dialog>
+
+        <CalibrationWizard 
+          open={calibrationWizardOpen}
+          onClose={() => setCalibrationWizardOpen(false)}
+          room={calibrationRoom}
+          sensor={calibrationSensor}
+          onCalibrationComplete={(sensorId, maxDist, sens) => {
+            console.log("Calibration complete:", sensorId, maxDist, sens);
+            // Optionally update local sensor state with new params
+          }}
+        />
 
       </Box>
     </ThemeProvider>

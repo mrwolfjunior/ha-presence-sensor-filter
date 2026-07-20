@@ -17,6 +17,7 @@ from db import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
+from fastapi.responses import JSONResponse
 logger = logging.getLogger("presence_ai_backend")
 
 from contextlib import asynccontextmanager
@@ -78,6 +79,7 @@ mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 # State management
 connected_websockets = []
 sensor_buffers = defaultdict(lambda: deque(maxlen=100))
+known_sensors_cache = set()
 
 async def broadcast_websocket(message: dict):
     for connection in connected_websockets:
@@ -148,7 +150,9 @@ def on_message(client, userdata, msg):
             presence = payload.get("presence", payload.get("occupancy", False))
             
             # Register sensor if new, do not overwrite settings
-            upsert_sensor(sensor_id, is_enabled=False)
+            if sensor_id not in known_sensors_cache:
+                upsert_sensor(sensor_id, is_enabled=False)
+                known_sensors_cache.add(sensor_id)
             
             # Broadcast raw data for the settings UI, regardless of enabled status
             if main_loop and main_loop.is_running():
@@ -207,6 +211,24 @@ async def start_calibration(sensor_id: str):
     # This triggers the "Walk-to-Calibrate" mode
     return {"status": "calibration_started", "sensor_id": sensor_id}
 
+@app.post("/api/calibrate/wizard")
+async def calibrate_wizard(action: dict):
+    # Action defines the step of the calibration wizard (e.g. 'reset', 'empty_room', 'perimeter', 'static', 'process')
+    step = action.get('step')
+    sensor_id = action.get('sensor_id')
+    room_id = action.get('room_id')
+    
+    if step == 'reset':
+        print(f"[CALIBRATION] Resetting sensor {sensor_id} to maximum range and sensitivity")
+        # TODO: send HA command
+    elif step == 'process':
+        print(f"[CALIBRATION] Processing collected data for sensor {sensor_id} in room {room_id}")
+        # TODO: ML Processing logic goes here
+        # Return the new configured values to the frontend
+        return {"status": "success", "new_max_distance": 4.5, "new_sensitivity": 70}
+        
+    return {"status": "success", "step": step}
+
 @app.get("/api/sensors")
 async def get_sensors_list():
     return get_all_sensors()
@@ -222,13 +244,17 @@ class SensorConfig(BaseModel):
 
 @app.post("/api/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, config: SensorConfig):
-    if config.is_enabled is not None:
-        set_sensor_enabled(sensor_id, config.is_enabled)
-    update_sensor_config(
-        sensor_id, config.room_id, config.x, config.y, 
-        config.fov_angle, config.heading_angle, config.max_distance
-    )
-    return {"status": "success"}
+    try:
+        if config.is_enabled is not None:
+            set_sensor_enabled(sensor_id, config.is_enabled)
+        update_sensor_config(
+            sensor_id, config.room_id, config.x, config.y, 
+            config.fov_angle, config.heading_angle, config.max_distance
+        )
+        return {"status": "success"}
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={"status": "error", "traceback": traceback.format_exc()})
 
 # ---- Floors API ----
 class FloorConfig(BaseModel):
@@ -260,6 +286,7 @@ class RoomConfig(BaseModel):
     height: float = 4.0
     x: float = 0.0
     y: float = 0.0
+    wall_material: str = 'mattone'
 
 @app.get("/api/rooms")
 async def api_get_rooms(floor_id: Optional[str] = None):
@@ -267,7 +294,7 @@ async def api_get_rooms(floor_id: Optional[str] = None):
 
 @app.post("/api/rooms")
 async def api_upsert_room(room: RoomConfig):
-    upsert_room(room.id, room.name, room.floor_id, room.ha_area_id, room.width, room.height, room.x, room.y)
+    upsert_room(room.id, room.name, room.floor_id, room.ha_area_id, room.width, room.height, room.x, room.y, room.wall_material)
     return {"status": "success"}
 
 @app.delete("/api/rooms/{room_id}")
@@ -314,9 +341,13 @@ class SyncTopologyPayload(BaseModel):
 
 @app.post("/api/topology/sync")
 async def api_sync_topology(payload: SyncTopologyPayload):
-    from db import sync_topology
-    sync_topology(payload.rooms, payload.doors)
-    return {"status": "success"}
+    try:
+        from db import sync_topology
+        sync_topology(payload.rooms, payload.doors)
+        return {"status": "success"}
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={"status": "error", "traceback": traceback.format_exc()})
 
 import websockets
 

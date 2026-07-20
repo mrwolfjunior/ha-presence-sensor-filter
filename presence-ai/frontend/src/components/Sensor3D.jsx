@@ -25,27 +25,29 @@ export default function Sensor3D({ sensor, room, allRooms, isSelected, onSelect,
     target.position.set(0, -1, 0);
   }, [target]);
 
+  const trueDragPos = React.useRef({ x, y });
+
   const bind = useDrag(({ tap, first, down, movement: [mx, my], memo }) => {
     if (tap) {
       onSelect();
       return memo;
     }
     if (first) {
-      memo = { x: dragPosRef.current.x, y: dragPosRef.current.y, heading: localHeading };
+      memo = { x: localPos.x, y: localPos.y };
     }
 
     const worldDx = mx / camera.zoom;
     const worldDy = my / camera.zoom;
-    
-    // proposedX and proposedY are local to the *initial* room of the drag
-    const localProposedX = memo.x + worldDx;
-    const localProposedY = memo.y + worldDy; 
 
-    // Convert to absolute world coordinates to find if we dropped in another room
-    const absX = room.x + localProposedX;
-    const absY = room.y + localProposedY;
+    // proposedX/Y are local to the ORIGINAL room
+    let proposedX = memo.x + worldDx;
+    let proposedY = memo.y + worldDy;
 
-    // Determine the active room
+    // Calculate ABSOLUTE position
+    let absX = room.x + proposedX;
+    let absY = room.y + proposedY;
+
+    // Determine the active room based on absolute position
     let activeRoom = room;
     if (allRooms && allRooms.length > 0) {
       activeRoom = allRooms.find(r => 
@@ -54,65 +56,76 @@ export default function Sensor3D({ sensor, room, allRooms, isSelected, onSelect,
       ) || room;
     }
 
-    // Convert back to local coordinates relative to the new activeRoom
-    let newX = absX - activeRoom.x;
-    let newY = absY - activeRoom.y;
-    let newHeading = memo.heading;
+    let finalHeading = localHeading;
 
+    // Apply snapping in ABSOLUTE space
     if (activeRoom) {
-      const SNAP_DIST = 0.5;
-      const rw2 = activeRoom.width / 2;
-      const rh2 = activeRoom.height / 2;
+      const SNAP_DIST = 0.4;
+      const leftEdge = activeRoom.x - activeRoom.width / 2;
+      const rightEdge = activeRoom.x + activeRoom.width / 2;
+      const topEdge = activeRoom.y - activeRoom.height / 2;
+      const bottomEdge = activeRoom.y + activeRoom.height / 2;
 
-      const leftEdge = -rw2;
-      const rightEdge = rw2;
-      const topEdge = -rh2;
-      const bottomEdge = rh2;
+      const isWithinX = absX >= leftEdge - SNAP_DIST && absX <= rightEdge + SNAP_DIST;
+      const isWithinY = absY >= topEdge - SNAP_DIST && absY <= bottomEdge + SNAP_DIST;
 
-      let snapped = false;
-
-      const isWithinX = newX >= leftEdge - SNAP_DIST && newX <= rightEdge + SNAP_DIST;
-      const isWithinY = newY >= topEdge - SNAP_DIST && newY <= bottomEdge + SNAP_DIST;
-
-      const distLeft = isWithinY ? Math.abs(newX - leftEdge) : Infinity;
-      const distRight = isWithinY ? Math.abs(newX - rightEdge) : Infinity;
-      const distTop = isWithinX ? Math.abs(newY - topEdge) : Infinity;
-      const distBottom = isWithinX ? Math.abs(newY - bottomEdge) : Infinity;
+      const distLeft = isWithinY ? Math.abs(absX - leftEdge) : Infinity;
+      const distRight = isWithinY ? Math.abs(absX - rightEdge) : Infinity;
+      const distTop = isWithinX ? Math.abs(absY - topEdge) : Infinity;
+      const distBottom = isWithinX ? Math.abs(absY - bottomEdge) : Infinity;
 
       const minDist = Math.min(distLeft, distRight, distTop, distBottom);
 
+      let snapped = false;
       if (minDist < SNAP_DIST) {
         snapped = true;
         if (minDist === distLeft) {
-           newX = leftEdge + 0.1;
-           newHeading = 90;
+           absX = leftEdge + 0.1;
+           finalHeading = 90;
         } else if (minDist === distRight) {
-           newX = rightEdge - 0.1;
-           newHeading = 270;
+           absX = rightEdge - 0.1;
+           finalHeading = 270;
         } else if (minDist === distTop) {
-           newY = topEdge + 0.1;
-           newHeading = 0; 
+           absY = topEdge + 0.1;
+           finalHeading = 0; 
         } else if (minDist === distBottom) {
-           newY = bottomEdge - 0.1;
-           newHeading = 180;
+           absY = bottomEdge - 0.1;
+           finalHeading = 180;
         }
       }
 
       if (!snapped) {
-         newX = Math.round(newX * 2) / 2;
-         newY = Math.round(newY * 2) / 2;
+        // Fine grid snap (10cm) in absolute space
+        absX = Math.round(absX * 10) / 10;
+        absY = Math.round(absY * 10) / 10;
+        setLocalHeading(heading_angle || 0); // Restore to DB state if not snapped
+      } else {
+        setLocalHeading(finalHeading);
       }
     }
 
-    setLocalPos({ x: newX, y: newY });
-    setLocalHeading(newHeading);
+    // Convert back to ORIGINAL room's local space for visual rendering!
+    // This is critical because the <group> is still a child of the original room during drag.
+    let renderX = absX - room.x;
+    let renderY = absY - room.y;
+    
+    setLocalPos({ x: renderX, y: renderY });
 
     if (!down) {
-      // Upon drop, if we changed room, memo is no longer valid, but the user must start a new drag anyway
-      onUpdate(sensor_id, { x: newX, y: newY, heading_angle: newHeading, room_id: activeRoom.id });
+      // Convert to local space of the active room for saving
+      let finalLocalX = absX - activeRoom.x;
+      let finalLocalY = absY - activeRoom.y;
+
+      onUpdate(sensor_id, { 
+        x: finalLocalX, 
+        y: finalLocalY, 
+        room_id: activeRoom.id,
+        heading_angle: finalHeading 
+      });
     }
+    
     return memo;
-  }, { filterTaps: true });
+  }, { pointerEvents: true, filterTaps: true });
 
   const posX = localPos.x;
   const posY = -localPos.y;

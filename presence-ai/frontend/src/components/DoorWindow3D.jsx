@@ -15,6 +15,7 @@ export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onS
     if (!allDoors) return false;
     for (const other of allDoors) {
       if (other.id === id) continue;
+      if (other.room_id !== room_id) continue; // Only check overlap with doors in the same room
       
       const isHorizontal = prot === 0 || prot === 180;
       const otherIsHorizontal = other.rotation === 0 || other.rotation === 180;
@@ -47,7 +48,6 @@ export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onS
 
   useEffect(() => {
     setLocalPos({ x, y, rot: rotation });
-    dragPosRef.current = { x, y };
   }, [x, y, rotation]);
 
   const bind = useDrag(({ tap, first, down, movement: [mx, my], memo }) => {
@@ -56,7 +56,7 @@ export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onS
       return memo;
     }
     if (first) {
-      memo = { x: dragPosRef.current.x, y: dragPosRef.current.y };
+      memo = { x: localPos.x, y: localPos.y };
     }
     
     const worldDx = mx / camera.zoom;
@@ -66,18 +66,18 @@ export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onS
     let newY = memo.y + worldDy;
     let newRot = rotation;
 
-    // Strict Perimeter Snapping to Parent Room
+    // Strict Perimeter Snapping to Parent Room (in local coordinates)
     if (allRooms && allRooms.length > 0) {
       const parentRoom = allRooms.find(r => r.id === room_id);
       if (parentRoom) {
         const hw = parentRoom.width / 2;
         const hh = parentRoom.height / 2;
         
-        // Coordinates of the 4 edges
-        const left = parentRoom.x - hw;
-        const right = parentRoom.x + hw;
-        const top = parentRoom.y - hh;    // Smaller Y means visually higher
-        const bottom = parentRoom.y + hh; // Larger Y means visually lower
+        // Coordinates of the 4 edges relative to room center
+        const left = -hw;
+        const right = hw;
+        const top = -hh;    
+        const bottom = hh; 
         
         // Distances from proposed position to each edge
         const dTop = Math.abs(newY - top);
@@ -118,7 +118,6 @@ export default function DoorWindow3D({ item, allRooms, allDoors, isSelected, onS
         setLocalPos({ x: memo.x, y: memo.y, rot: rotation });
         setIsOverlapping(false);
       } else {
-        dragPosRef.current = { x: newX, y: newY };
         onUpdate(id, { x: newX, y: newY, rotation: newRot });
       }
     }

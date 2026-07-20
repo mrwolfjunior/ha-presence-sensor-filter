@@ -74,45 +74,47 @@ export default function Map3D({
 
         <Suspense fallback={null}>
           {/* Rooms */}
-          {rooms.map(room => (
-            <Room3D 
-              key={room.id} 
-              room={room} 
-              allRooms={rooms}
-              allDoors={doors}
-              isSelected={selectedElement?.id === room.id}
-              onSelect={() => onSelectElement({ type: 'room', id: room.id })}
-              onUpdate={updateRoom} onDelete={deleteRoom}
-              setControlsEnabled={setControlsEnabled}
-            />
-          ))}
-
-          {/* Sensors */}
-          {sensors.map(sensor => {
-            const room = rooms.find(r => r.id === sensor.room_id);
+          {rooms.map(room => {
+            const roomSensors = sensors.filter(s => s.room_id === room.id);
+            const roomDoors = doors.filter(d => d.room_id === room.id);
+            
             return (
-              <Sensor3D 
-                key={sensor.sensor_id} sensor={sensor} room={room}
-                isSelected={selectedElement?.id === sensor.sensor_id}
-                onSelect={() => onSelectElement({ type: 'sensor', id: sensor.sensor_id })}
-                onUpdate={updateSensorConfig}
+              <Room3D 
+                key={room.id} 
+                room={room} 
+                allRooms={rooms}
+                allDoors={doors}
+                isSelected={selectedElement?.id === room.id}
+                onSelect={() => onSelectElement({ type: 'room', id: room.id })}
+                onUpdate={updateRoom} onDelete={deleteRoom}
                 setControlsEnabled={setControlsEnabled}
-              />
+              >
+                {/* Sensors for this room */}
+                {roomSensors.map(sensor => (
+                  <Sensor3D 
+                    key={sensor.sensor_id} sensor={sensor} room={room} allRooms={rooms}
+                    isSelected={selectedElement?.id === sensor.sensor_id}
+                    onSelect={() => onSelectElement({ type: 'sensor', id: sensor.sensor_id })}
+                    onUpdate={updateSensorConfig}
+                    setControlsEnabled={setControlsEnabled}
+                  />
+                ))}
+
+                {/* Doors and Windows for this room */}
+                {roomDoors.map(door => (
+                  <DoorWindow3D 
+                    key={door.id} item={door} 
+                    allRooms={rooms}
+                    allDoors={doors}
+                    isSelected={selectedElement?.id === door.id}
+                    onSelect={() => onSelectElement({ type: door.type, id: door.id })}
+                    onUpdate={updateDoor} onDelete={deleteDoor}
+                    setControlsEnabled={setControlsEnabled}
+                  />
+                ))}
+              </Room3D>
             );
           })}
-
-          {/* Doors and Windows */}
-          {doors.map(door => (
-            <DoorWindow3D 
-              key={door.id} item={door} 
-              allRooms={rooms}
-              allDoors={doors}
-              isSelected={selectedElement?.id === door.id}
-              onSelect={() => onSelectElement({ type: door.type, id: door.id })}
-              onUpdate={updateDoor} onDelete={deleteDoor}
-              setControlsEnabled={setControlsEnabled}
-            />
-          ))}
         </Suspense>
       </Canvas>
     </div>

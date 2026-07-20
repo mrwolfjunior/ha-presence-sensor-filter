@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Box, Drawer, Button, Typography, TextField, FormControl, InputLabel, 
-  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, CssBaseline, ThemeProvider, createTheme, Chip, Paper
+  Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper
 } from '@mui/material';
 import MapIcon from '@mui/icons-material/Map';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -33,6 +33,42 @@ const theme = createTheme({
   },
   typography: { fontFamily: 'Roboto, sans-serif' }
 });
+
+function DimensionInput({ label, value, onChange }) {
+  const [localVal, setLocalVal] = useState(String(value));
+  
+  useEffect(() => {
+    setLocalVal(String(value));
+  }, [value]);
+
+  const handleBlur = () => {
+    const parsed = parseFloat(localVal);
+    if (!isNaN(parsed) && parsed > 0.5) {
+      onChange(parsed);
+    } else {
+      setLocalVal(String(value));
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.target.blur();
+    }
+  };
+
+  return (
+    <TextField 
+      label={label} 
+      size="small" 
+      type="number" 
+      value={localVal} 
+      onChange={(e) => setLocalVal(e.target.value)}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      inputProps={{ step: 0.1, min: 0.5 }}
+    />
+  );
+}
 
 function App() {
   const [rooms, setRooms] = useState([]);
@@ -243,20 +279,20 @@ function App() {
       return false;
     };
 
-    // Generate possible spots around the perimeter
+    // Generate possible spots around the perimeter in local coordinates
     const spots = [];
     const step = 0.5;
     // Bottom
-    for (let x = targetRoom.x - targetRoom.width/2 + margin; x <= targetRoom.x + targetRoom.width/2 - margin; x += step) spots.push({ x, y: targetRoom.y + targetRoom.height/2, rot: 0 });
+    for (let x = -targetRoom.width/2 + margin; x <= targetRoom.width/2 - margin; x += step) spots.push({ x, y: targetRoom.height/2, rot: 0 });
     // Top
-    for (let x = targetRoom.x - targetRoom.width/2 + margin; x <= targetRoom.x + targetRoom.width/2 - margin; x += step) spots.push({ x, y: targetRoom.y - targetRoom.height/2, rot: 180 });
+    for (let x = -targetRoom.width/2 + margin; x <= targetRoom.width/2 - margin; x += step) spots.push({ x, y: -targetRoom.height/2, rot: 180 });
     // Left
-    for (let y = targetRoom.y - targetRoom.height/2 + margin; y <= targetRoom.y + targetRoom.height/2 - margin; y += step) spots.push({ x: targetRoom.x - targetRoom.width/2, y, rot: -90 });
+    for (let y = -targetRoom.height/2 + margin; y <= targetRoom.height/2 - margin; y += step) spots.push({ x: -targetRoom.width/2, y, rot: -90 });
     // Right
-    for (let y = targetRoom.y - targetRoom.height/2 + margin; y <= targetRoom.y + targetRoom.height/2 - margin; y += step) spots.push({ x: targetRoom.x + targetRoom.width/2, y, rot: 90 });
+    for (let y = -targetRoom.height/2 + margin; y <= targetRoom.height/2 - margin; y += step) spots.push({ x: targetRoom.width/2, y, rot: 90 });
 
-    let spawnX = targetRoom.x;
-    let spawnY = targetRoom.y + targetRoom.height / 2;
+    let spawnX = 0;
+    let spawnY = targetRoom.height / 2;
     let spawnRot = 0;
 
     // Find first free spot
@@ -285,8 +321,38 @@ function App() {
   };
 
   const updateRoomLocal = (id, updates) => {
+    const oldRoom = rooms.find(r => r.id === id);
+    if (!oldRoom) return;
+
     const newRooms = rooms.map(r => r.id === id ? { ...r, ...updates } : r);
-    pushToHistory(newRooms, doors);
+
+    const dw = updates.width !== undefined ? updates.width - oldRoom.width : 0;
+    const dh = updates.height !== undefined ? updates.height - oldRoom.height : 0;
+
+    let newDoors = doors;
+    let newSensors = dbSensors;
+
+    if (dw !== 0 || dh !== 0) {
+      newDoors = doors.map(d => {
+        if (d.room_id !== id) return d;
+        let nx = d.x;
+        let ny = d.y;
+        if (dw !== 0 && Math.abs(d.x) > 0.1) nx += Math.sign(d.x) * (dw / 2);
+        if (dh !== 0 && Math.abs(d.y) > 0.1) ny += Math.sign(d.y) * (dh / 2);
+        return { ...d, x: nx, y: ny };
+      });
+
+      newSensors = dbSensors.map(s => {
+        if (s.room_id !== id) return s;
+        let nx = s.x;
+        let ny = s.y;
+        if (dw !== 0 && Math.abs(s.x) > 0.1) nx += Math.sign(s.x) * (dw / 2);
+        if (dh !== 0 && Math.abs(s.y) > 0.1) ny += Math.sign(s.y) * (dh / 2);
+        return { ...s, x: nx, y: ny };
+      });
+    }
+
+    pushToHistory(newRooms, newDoors, newSensors);
   };
 
   const deleteRoomLocal = (id) => {
@@ -307,9 +373,44 @@ function App() {
     if (selectedElement?.id === id) setSelectedElement(null);
   };
 
+  const placeNewSensor = (sensor_id) => {
+    let spawnX = 0;
+    let spawnY = 0;
+    let room_id = activeRooms[0]?.id || null;
+
+    if (activeRooms.length > 0) {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      activeRooms.forEach(r => {
+        const halfW = r.width / 2;
+        const halfH = r.height / 2;
+        minX = Math.min(minX, r.x - halfW);
+        maxX = Math.max(maxX, r.x + halfW);
+        minY = Math.min(minY, r.y - halfH);
+        maxY = Math.max(maxY, r.y + halfH);
+      });
+      if (minX === Infinity) {
+        minX = -2; maxX = 2; maxY = 2;
+      }
+      
+      const absSpawnX = minX + (Math.random() * (maxX - minX));
+      const absSpawnY = maxY + 2.0;
+      const roundedAbsSpawnX = Math.round(absSpawnX * 2) / 2;
+
+      // Convert to local coords of the assigned room
+      const room = activeRooms[0];
+      spawnX = roundedAbsSpawnX - room.x;
+      spawnY = absSpawnY - room.y;
+    }
+
+    updateSensorLocal(sensor_id, { x: spawnX, y: spawnY, room_id });
+  };
+
   const updateSensorLocal = (id, updates) => {
     const newSensors = dbSensors.map(s => s.sensor_id === id ? { ...s, ...updates } : s);
     pushToHistory(rooms, doors, newSensors);
+    if (updates.room_id === null && selectedElement?.id === id) {
+      setSelectedElement(null);
+    }
   };
 
   const updateSensorConfig = async (id, updates) => {
@@ -368,11 +469,107 @@ function App() {
     if (selectedElement.type === 'room') {
       const room = rooms.find(r => r.id === selectedElement.id);
       if(!room) return null;
+      
+      const roomSensors = dbSensors.filter(s => s.room_id === room.id);
+      
+      const isDoorTouchingRoom = (d, r) => {
+        if (d.room_id === r.id) return true;
+        const dRoom = rooms.find(rm => rm.id === d.room_id);
+        if (!dRoom) return false;
+        
+        const absX = dRoom.x + d.x;
+        const absY = dRoom.y + d.y;
+        
+        const localX = absX - r.x;
+        const localY = -(absY - r.y);
+        
+        const isVertical = d.rotation === 90 || d.rotation === -90 || d.rotation === 270;
+        const hw = r.width / 2;
+        const hh = r.height / 2;
+        
+        if (isVertical) {
+          if (Math.abs(Math.abs(localX) - hw) < 0.5) {
+            if (localY + d.width/2 >= -hh && localY - d.width/2 <= hh) return true;
+          }
+        } else {
+          if (Math.abs(Math.abs(localY) - hh) < 0.5) {
+            if (localX + d.width/2 >= -hw && localX - d.width/2 <= hw) return true;
+          }
+        }
+        return false;
+      };
+
+      const touchingDoors = doors.filter(d => isDoorTouchingRoom(d, room));
+      const adjacentRooms = rooms.filter(r => 
+        r.id !== room.id && 
+        r.floor_id === room.floor_id &&
+        touchingDoors.some(d => isDoorTouchingRoom(d, r))
+      );
+
       return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField label="Nome" size="small" value={room.name} onChange={(e) => updateRoomLocal(room.id, {name: e.target.value})} />
-          <TextField label="Larghezza (m)" size="small" type="number" value={room.width} onChange={(e) => updateRoomLocal(room.id, {width: parseFloat(e.target.value)})} />
-          <TextField label="Lunghezza (m)" size="small" type="number" value={room.height} onChange={(e) => updateRoomLocal(room.id, {height: parseFloat(e.target.value)})} />
+          <DimensionInput label="Larghezza (m)" value={room.width} onChange={(val) => updateRoomLocal(room.id, {width: val})} />
+          <DimensionInput label="Lunghezza (m)" value={room.height} onChange={(val) => updateRoomLocal(room.id, {height: val})} />
+          
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="subtitle2" fontWeight="bold">Entità Collegate</Typography>
+          
+          <Typography variant="body2" color="textSecondary" sx={{ mt: -1 }}>Sensori ({roomSensors.length})</Typography>
+          {roomSensors.length > 0 ? (
+            <List dense sx={{ pt: 0, pb: 0, border: '1px solid #e0e0e0', borderRadius: 1 }}>
+              {roomSensors.map(s => (
+                <ListItem key={s.sensor_id} disablePadding>
+                  <ListItemButton onClick={() => setSelectedElement({ type: 'sensor', id: s.sensor_id })}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <SensorsIcon fontSize="small" color="primary" />
+                    </ListItemIcon>
+                    <ListItemText primary={s.name || "Sensore Sconosciuto"} secondary={s.sensor_id} secondaryTypographyProps={{ noWrap: true, title: s.sensor_id }} />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+             <Typography variant="caption" sx={{ display: 'block', mb: 1 }}>Nessun sensore</Typography>
+          )}
+
+          <Typography variant="body2" color="textSecondary">Porte e Finestre ({touchingDoors.length})</Typography>
+          {touchingDoors.length > 0 ? (
+            <List dense sx={{ pt: 0, pb: 0, border: '1px solid #e0e0e0', borderRadius: 1 }}>
+              {touchingDoors.map(d => (
+                <ListItem key={d.id} disablePadding>
+                  <ListItemButton onClick={() => setSelectedElement({ type: d.type, id: d.id })}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      {d.type === 'window' ? <WindowIcon fontSize="small" color="info" /> : <MeetingRoomIcon fontSize="small" color="action" />}
+                    </ListItemIcon>
+                    <ListItemText primary={d.type === 'window' ? 'Finestra' : 'Porta'} secondary={d.room_id !== room.id ? "Condivisa" : ""} />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+             <Typography variant="caption" sx={{ display: 'block', mb: 1 }}>Nessuna porta/finestra</Typography>
+          )}
+
+          <Typography variant="body2" color="textSecondary">Stanze Adiacenti ({adjacentRooms.length})</Typography>
+          {adjacentRooms.length > 0 ? (
+            <List dense sx={{ pt: 0, pb: 0, border: '1px solid #e0e0e0', borderRadius: 1 }}>
+              {adjacentRooms.map(r => (
+                <ListItem key={r.id} disablePadding>
+                  <ListItemButton onClick={() => setSelectedElement({ type: 'room', id: r.id })}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                      <HomeIcon fontSize="small" color="primary" />
+                    </ListItemIcon>
+                    <ListItemText primary={r.name || "Stanza"} />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          ) : (
+             <Typography variant="caption" sx={{ display: 'block', mb: 1 }}>Nessuna stanza adiacente</Typography>
+          )}
+
+          <Divider sx={{ my: 1 }} />
           <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => deleteRoomLocal(room.id)}>Elimina Stanza</Button>
         </Box>
       );
@@ -406,7 +603,7 @@ function App() {
       return (
          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Typography variant="h6">{door.type === 'window' ? 'Finestra' : 'Porta'}</Typography>
-          <TextField label="Larghezza (m)" size="small" type="number" value={door.width} onChange={(e) => updateDoorLocal(door.id, {width: parseFloat(e.target.value)})} />
+          <DimensionInput label="Larghezza (m)" value={door.width} onChange={(val) => updateDoorLocal(door.id, {width: val})} />
           <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => deleteDoorLocal(door.id)}>Elimina</Button>
         </Box>
       );
@@ -457,7 +654,7 @@ function App() {
                   ) : (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                       {unlinkedSensors.map(s => (
-                        <Button key={s.sensor_id} variant="outlined" color="info" startIcon={<SensorsIcon />} size="small" sx={{ justifyContent: 'flex-start', textTransform: 'none' }} onClick={() => updateSensorLocal(s.sensor_id, { x: 0, y: 0, room_id: activeRooms[0]?.id || null })}>
+                        <Button key={s.sensor_id} variant="outlined" color="info" startIcon={<SensorsIcon />} size="small" sx={{ justifyContent: 'flex-start', textTransform: 'none' }} onClick={() => placeNewSensor(s.sensor_id)}>
                           {s.friendly_name || s.sensor_id}
                         </Button>
                       ))}

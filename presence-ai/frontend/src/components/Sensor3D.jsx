@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
 import { useDrag } from '@use-gesture/react';
 
-export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate, setControlsEnabled }) {
+export default function Sensor3D({ sensor, room, allRooms, isSelected, onSelect, onUpdate, setControlsEnabled }) {
   const { sensor_id, x, y, fov_angle, heading_angle, max_distance, is_enabled, presence } = sensor;
 
   if (!is_enabled) return null;
@@ -37,32 +37,47 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
     const worldDx = mx / camera.zoom;
     const worldDy = my / camera.zoom;
     
-    let proposedX = memo.x + worldDx;
-    let proposedY = memo.y + worldDy; 
+    // proposedX and proposedY are local to the *initial* room of the drag
+    const localProposedX = memo.x + worldDx;
+    const localProposedY = memo.y + worldDy; 
 
-    let newX = proposedX;
-    let newY = proposedY;
-    let newHeading = localHeading;
+    // Convert to absolute world coordinates to find if we dropped in another room
+    const absX = room.x + localProposedX;
+    const absY = room.y + localProposedY;
 
-    // Snapping logic
-    if (room) {
+    // Determine the active room
+    let activeRoom = room;
+    if (allRooms && allRooms.length > 0) {
+      activeRoom = allRooms.find(r => 
+        absX >= r.x - r.width/2 && absX <= r.x + r.width/2 &&
+        absY >= r.y - r.height/2 && absY <= r.y + r.height/2
+      ) || room;
+    }
+
+    // Convert back to local coordinates relative to the new activeRoom
+    let newX = absX - activeRoom.x;
+    let newY = absY - activeRoom.y;
+    let newHeading = memo.heading;
+
+    if (activeRoom) {
       const SNAP_DIST = 0.5;
-      const rx = room.x;
-      const ry = room.y;
-      const rw2 = room.width / 2;
-      const rh2 = room.height / 2;
+      const rw2 = activeRoom.width / 2;
+      const rh2 = activeRoom.height / 2;
 
-      const leftEdge = rx - rw2;
-      const rightEdge = rx + rw2;
-      const topEdge = ry - rh2;
-      const bottomEdge = ry + rh2;
+      const leftEdge = -rw2;
+      const rightEdge = rw2;
+      const topEdge = -rh2;
+      const bottomEdge = rh2;
 
       let snapped = false;
 
-      const distLeft = Math.abs(proposedX - leftEdge);
-      const distRight = Math.abs(proposedX - rightEdge);
-      const distTop = Math.abs(proposedY - topEdge);
-      const distBottom = Math.abs(proposedY - bottomEdge);
+      const isWithinX = newX >= leftEdge - SNAP_DIST && newX <= rightEdge + SNAP_DIST;
+      const isWithinY = newY >= topEdge - SNAP_DIST && newY <= bottomEdge + SNAP_DIST;
+
+      const distLeft = isWithinY ? Math.abs(newX - leftEdge) : Infinity;
+      const distRight = isWithinY ? Math.abs(newX - rightEdge) : Infinity;
+      const distTop = isWithinX ? Math.abs(newY - topEdge) : Infinity;
+      const distBottom = isWithinX ? Math.abs(newY - bottomEdge) : Infinity;
 
       const minDist = Math.min(distLeft, distRight, distTop, distBottom);
 
@@ -84,8 +99,8 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
       }
 
       if (!snapped) {
-         newX = Math.round(proposedX * 2) / 2;
-         newY = Math.round(proposedY * 2) / 2;
+         newX = Math.round(newX * 2) / 2;
+         newY = Math.round(newY * 2) / 2;
       }
     }
 
@@ -93,8 +108,8 @@ export default function Sensor3D({ sensor, room, isSelected, onSelect, onUpdate,
     setLocalHeading(newHeading);
 
     if (!down) {
-      dragPosRef.current = { x: proposedX, y: proposedY };
-      onUpdate(sensor_id, { x: newX, y: newY, heading_angle: newHeading });
+      // Upon drop, if we changed room, memo is no longer valid, but the user must start a new drag anyway
+      onUpdate(sensor_id, { x: newX, y: newY, heading_angle: newHeading, room_id: activeRoom.id });
     }
     return memo;
   }, { filterTaps: true });

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 const WALL_THICKNESS = 0.2;
 const WALL_HEIGHT = 2.5;
 
-export default function Room3D({ room, allRooms = [], allDoors = [], isSelected, onSelect, onUpdate, onDelete, setControlsEnabled }) {
+export default function Room3D({ room, allRooms = [], allDoors = [], isSelected, onSelect, onUpdate, onDelete, setControlsEnabled, children }) {
   const { x, y, width, height, name } = room;
   
   const [hovered, setHovered] = useState(false);
@@ -226,25 +226,32 @@ export default function Room3D({ room, allRooms = [], allDoors = [], isSelected,
         const renderWallSegments = (isVertical, fixedPos, startPos, endPos) => {
           let segments = [[startPos, endPos]];
           
-          const cuttingDoors = allDoors.filter(d => {
-            const doorLocalX = d.x - room.x;
-            const doorLocalY = room.y - d.y;
-            
+          const doorsWithLocalCoords = allDoors.map(d => {
+            if (d.room_id === room.id) {
+              return { ...d, localX: d.x, localY: -d.y };
+            } else {
+              const otherRoom = allRooms.find(r => r.id === d.room_id);
+              if (!otherRoom) return null;
+              const absX = otherRoom.x + d.x;
+              const absY = otherRoom.y + d.y;
+              return { ...d, localX: absX - room.x, localY: -(absY - room.y) };
+            }
+          }).filter(Boolean);
+
+          const cuttingDoors = doorsWithLocalCoords.filter(d => {
             if (isVertical) {
-              if (Math.abs(doorLocalX - fixedPos) > 0.5) return false;
-              if (doorLocalY + d.width/2 < startPos || doorLocalY - d.width/2 > endPos) return false;
+              if (Math.abs(d.localX - fixedPos) > 0.5) return false;
+              if (d.localY + d.width/2 < startPos || d.localY - d.width/2 > endPos) return false;
               return true;
             } else {
-              if (Math.abs(doorLocalY - fixedPos) > 0.5) return false;
-              if (doorLocalX + d.width/2 < startPos || doorLocalX - d.width/2 > endPos) return false;
+              if (Math.abs(d.localY - fixedPos) > 0.5) return false;
+              if (d.localX + d.width/2 < startPos || d.localX - d.width/2 > endPos) return false;
               return true;
             }
           });
 
           cuttingDoors.forEach(d => {
-            const doorLocalX = d.x - room.x;
-            const doorLocalY = room.y - d.y;
-            const dCenter = isVertical ? doorLocalY : doorLocalX;
+            const dCenter = isVertical ? d.localY : d.localX;
             const dHalf = d.width / 2;
             const cutStart = dCenter - dHalf;
             const cutEnd = dCenter + dHalf;
@@ -292,6 +299,9 @@ export default function Room3D({ room, allRooms = [], allDoors = [], isSelected,
           </>
         );
       })()}
+
+      {/* Render children (Sensors, Doors) inside the room's group */}
+      {children}
     </animated.group>
   );
 }

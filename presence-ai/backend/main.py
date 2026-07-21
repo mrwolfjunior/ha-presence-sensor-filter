@@ -243,11 +243,15 @@ def on_message(client, userdata, msg):
             if main_loop and main_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
                     broadcast_websocket({
-                        "type": "radar_update",
+                        "type": "mqtt_state",
                         "sensor_id": sensor_id,
-                        "distance": distance,
-                        "presence": presence,
-                        "ai_filtered_presence": presence # Raw for now
+                        "data": {
+                            "distance": distance,
+                            "presence": presence,
+                            "ai_filtered_presence": presence,
+                            "illuminance": payload.get("illuminance"),
+                            "battery": payload.get("battery")
+                        }
                     }),
                     main_loop
                 )

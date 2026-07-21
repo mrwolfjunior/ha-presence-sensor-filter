@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0
+- **UI/UX**: Risolto il bug "Sensore Sconosciuto" nei dettagli della stanza. Ora l'interfaccia utilizza correttamente il `friendly_name` personalizzato o nativo del dispositivo.
+- **WebSocket/MQTT Realtime**: Aggiunti i dati relativi a batteria (`battery`) e luminosità (`illuminance`) nel payload WebSocket, così da popolare in tempo reale la dashboard React senza bloccarsi su valori "N/D".
+
 ## 2.2.0
 - **Bugfix (DB)**: Aggiunte migrazioni automatiche `ALTER TABLE` per aggiornare correttamente le planimetrie preesistenti all'ultima versione.
 - **Bugfix (MQTT)**: Risolto un bug critico di scope Python (`UnboundLocalError`) che bloccava il flusso di elaborazione MQTT all'avvio.

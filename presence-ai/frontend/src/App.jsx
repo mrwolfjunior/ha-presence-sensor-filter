@@ -628,7 +628,7 @@ function App() {
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       <SensorsIcon fontSize="small" color="primary" />
                     </ListItemIcon>
-                    <ListItemText primary={s.name || "Sensore Sconosciuto"} secondary={s.sensor_id} secondaryTypographyProps={{ noWrap: true, title: s.sensor_id }} />
+                    <ListItemText primary={s.psf_friendly_name || s.friendly_name || s.name || "Sensore Sconosciuto"} secondary={s.sensor_id} secondaryTypographyProps={{ noWrap: true, title: s.sensor_id }} />
                   </ListItemButton>
                 </ListItem>
               ))}

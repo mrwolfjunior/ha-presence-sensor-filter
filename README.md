@@ -1,4 +1,4 @@
-# TS0601 Presence Sensor Filter AI (v2.0)
+# TS0601 Presence Sensor Filter AI (v2.1)
 
 Questo Add-on per Home Assistant trasforma i tuoi sensori di presenza radar mmWave Tuya TS0601 (collegati tramite Zigbee2MQTT) in un **Motore di Consapevolezza Spaziale Multi-Sensore con AI**, rendendoli estremamente immuni ai falsi positivi (es. tende, ventilatori, o "ghosting" dietro i muri) e perfetti per l'uso all'interno di un sistema di allarme (come Alarmo).
 
@@ -9,7 +9,9 @@ L'add-on espone un'interfaccia utente web (Ingress) in 3D costruita in React/Thr
 *   **Machine Learning (Auto-Addestrante)**: Classificazione basata su Random Forest per identificare e sopprimere i falsi positivi. I modelli si auto-addestrano individualmente per ogni sensore di notte usando un DB locale (SQLite).
 *   **Multi-Target & Trajectory Tracking**: Invece di limitarsi a sapere se c'è "qualcuno", il motore isola tracciati di distanze contemporanee (algoritmo Nearest Neighbor) calcolandone in real-time la *velocità* (avvicinamento, allontanamento o stazionamento). 
 *   **Topologia 1D Anti-Ghosting**: L'UI ti permette di disegnare la planimetria 3D delle tue stanze. Il backend calcola matematicamente le dimensioni della stanza per invalidare a priori qualsiasi target le cui onde radar siano uscite al di fuori del muro perimetrale.
-*   **Wasp-in-a-Box e Handover**: Gestione avanzata per stanze adiacenti e "porte" virtuali.
+*   **Wasp-in-a-Box e Handover Avanzato**: Gestione per stanze adiacenti, porte e porte finestre con logica *Virtual Entry Zones*. Il sistema supporta l'assegnamento multiplo di sensori magnetici per gestire ingressi multipli.
+*   **Stanze Aperte (Ringhiere/Balconi)**: È ora possibile mappare muri "assenti" (visualizzati con tratteggio nel render 3D) che mantengono l'isolamento degli ambienti permettendo un corretto tracking su logge, ballatoi e balconi.
+*   **Gating Training AI**: I modelli Random Forest avviano il training di falsi positivi solo quando l'algoritmo rileva che la stanza è stata completamente calibrata (mappatura del cono d'ombra radar).
 *   **Integrazione Alarmo Nativia**: Nel pannello "Sicurezza e Eventi", l'Add-on legge direttamente gli scatti anomali di Alarmo permettendoti di segnarli visivamente come "Falsi Positivi". Questa azione nutrirà l'AI per impedire che l'evento si ripeta alla stessa distanza/velocità.
 *   **MQTT Discovery**: I sensori filtrati vengono esposti automaticamente su Home Assistant come sensori puliti, pronti all'uso nelle automazioni, senza nessun YAML necessario.
 

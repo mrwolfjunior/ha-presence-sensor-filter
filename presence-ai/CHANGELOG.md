@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+- **Wasp-in-a-box Algorithm**: Migliorata la logica di tracciamento e attraversamento porte con calcolo "Virtual Entry Zones".
+- **Porte Finestre**: Possibilità di contrassegnare le finestre come porte finestre, permettendo all'algoritmo di considerarle come varchi per il wasp-in-a-box.
+- **Ringhiere e Stanze Aperte**: Nuova opzione per tipologia di muri "Assente (Ringhiera)" con renderizzazione a tratteggio, utile per balconi, logge e ballatoi.
+- **Sensori Multipli**: Supporto per l'assegnazione di molteplici sensori magnetici di contatto alla singola porta/finestra tramite UI dinamica e a scomparsa.
+- **Gating Addestramento ML**: Il training del modello di Intelligenza Artificiale locale attende ora che la stanza sia stata preventivamente calibrata dal radar.
+
 ## 2.0.0
 - **Machine Learning Engine**: Integrato modulo Python backend basato su Scikit-Learn per l'auto-apprendimento e il riconoscimento dei falsi positivi.
 - **Multi-Target Tracking**: Aggiunto algoritmo *Nearest Neighbor* per distinguere tracciati multipli contemporanei generati da payload MQTT composti.

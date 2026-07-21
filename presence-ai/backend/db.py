@@ -99,6 +99,10 @@ def init_db():
             FOREIGN KEY (floor_id) REFERENCES floors(id)
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE rooms ADD COLUMN wall_material TEXT DEFAULT 'mattone'")
+    except sqlite3.OperationalError:
+        pass
 
     # Table for doors and windows
     cursor.execute("""
@@ -117,6 +121,14 @@ def init_db():
             usage_frequency TEXT DEFAULT 'normal'
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE doors_windows ADD COLUMN is_french_window BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE doors_windows ADD COLUMN usage_frequency TEXT DEFAULT 'normal'")
+    except sqlite3.OperationalError:
+        pass
 
     # Table for alarmo events
     cursor.execute("""

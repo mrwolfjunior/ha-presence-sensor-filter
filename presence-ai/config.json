@@ -1,6 +1,6 @@
 {
   "name": "Presence Sensor Filter AI",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "slug": "presence_sensor_filter",
   "description": "Filtro intelligenza artificiale per sensori di presenza multipli",
   "arch": ["aarch64", "amd64", "armv7", "armhf", "i386"],

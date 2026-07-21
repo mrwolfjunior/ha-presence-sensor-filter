@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.0
+- **Bugfix (DB)**: Aggiunte migrazioni automatiche `ALTER TABLE` per aggiornare correttamente le planimetrie preesistenti all'ultima versione.
+- **Bugfix (MQTT)**: Risolto un bug critico di scope Python (`UnboundLocalError`) che bloccava il flusso di elaborazione MQTT all'avvio.
+
 ## 2.1.0
 - **Wasp-in-a-box Algorithm**: Migliorata la logica di tracciamento e attraversamento porte con calcolo "Virtual Entry Zones".
 - **Porte Finestre**: Possibilità di contrassegnare le finestre come porte finestre, permettendo all'algoritmo di considerarle come varchi per il wasp-in-a-box.

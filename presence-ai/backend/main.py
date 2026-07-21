@@ -300,7 +300,6 @@ def on_message(client, userdata, msg):
                 
                 if sensor_info:
                     topology["sensor"] = sensor_info
-                    import json
                     v_zones = sensor_info.get("virtual_entry_zones")
                     try:
                         topology["virtual_entry_zones"] = json.loads(v_zones) if v_zones else []

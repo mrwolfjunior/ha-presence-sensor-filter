@@ -8,8 +8,30 @@ import * as THREE from 'three';
 const WALL_THICKNESS = 0.2;
 const WALL_HEIGHT = 2.5;
 
+function DashedWallSegment({ isVertical, fixedPos, segCenter, segLength, wallColor }) {
+  const geometry = React.useMemo(() => {
+    const pts = isVertical 
+      ? [new THREE.Vector3(0, -segLength/2, 0), new THREE.Vector3(0, segLength/2, 0)]
+      : [new THREE.Vector3(-segLength/2, 0, 0), new THREE.Vector3(segLength/2, 0, 0)];
+    return new THREE.BufferGeometry().setFromPoints(pts);
+  }, [isVertical, segLength]);
+
+  return (
+    <animated.group position={[isVertical ? fixedPos : segCenter, isVertical ? segCenter : fixedPos, WALL_HEIGHT]}>
+      <lineSegments geometry={geometry} onUpdate={line => line.computeLineDistances()}>
+        <animated.lineDashedMaterial color={wallColor} dashSize={0.3} gapSize={0.2} />
+      </lineSegments>
+      {/* Invisible box to catch raycast/hover events */}
+      <mesh position={[0, 0, -WALL_HEIGHT/2]}>
+        <boxGeometry args={[isVertical ? WALL_THICKNESS : segLength, isVertical ? segLength : WALL_THICKNESS, WALL_HEIGHT]} />
+        <meshBasicMaterial visible={false} />
+      </mesh>
+    </animated.group>
+  );
+}
+
 export default function Room3D({ room, allRooms = [], allDoors = [], isSelected, onSelect, onUpdate, onDelete, setControlsEnabled, children }) {
-  const { x, y, width, height, name } = room;
+  const { x, y, width, height, name, wall_material } = room;
   
   const [hovered, setHovered] = useState(false);
   const [isOverlapping, setIsOverlapping] = useState(false);
@@ -271,6 +293,20 @@ export default function Room3D({ room, allRooms = [], allDoors = [], isSelected,
           return segments.map((seg, idx) => {
             const segLength = seg[1] - seg[0];
             const segCenter = (seg[0] + seg[1]) / 2;
+            const isAssente = wall_material === 'assente';
+            
+            if (isAssente) {
+              return (
+                <DashedWallSegment 
+                  key={`${isVertical ? 'v' : 'h'}-${fixedPos}-${idx}`} 
+                  isVertical={isVertical} 
+                  fixedPos={fixedPos} 
+                  segCenter={segCenter} 
+                  segLength={segLength} 
+                  wallColor={wallColor} 
+                />
+              );
+            }
             
             if (isVertical) {
               return (

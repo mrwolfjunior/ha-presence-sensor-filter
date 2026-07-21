@@ -46,6 +46,32 @@ def apply_topological_filter_1d(distance: float, sensor_config: dict, room: dict
         
     return True
 
+def calculate_virtual_entry_zones(sensor_config: dict, room: dict) -> list:
+    """
+    Calculates virtual entry zones based on FOV and room geometry.
+    If the room is much larger than the sensor's coverage, people can enter the FOV
+    from the sides at any distance.
+    Returns a list of valid distance ranges e.g. [{"min": 0, "max": max_distance}] 
+    or specific distances.
+    """
+    if not sensor_config or not room:
+        return [{"min": 0, "max": 999}]
+        
+    w2 = room.get("width", 5.0) / 2
+    h2 = room.get("height", 5.0) / 2
+    max_d = sensor_config.get("max_distance", 8.0)
+    
+    # Simple heuristic: if the max distance of the sensor is much smaller than the room diagonal,
+    # or the FOV is narrow (< 90), it's partial coverage. We degrade Wasp-in-a-box to allow all.
+    room_diagonal = math.hypot(w2*2, h2*2)
+    fov = sensor_config.get("fov_angle", 120.0)
+    
+    if max_d < room_diagonal * 0.8 or fov < 100:
+        return [{"min": 0.0, "max": max_d}] # All distances are valid virtual entry zones
+        
+    # If fully covered, the only virtual entry zone is the absolute max edge (just in case)
+    return [{"min": max_d - 0.5, "max": max_d + 0.5}]
+
 # --- Target Tracking ---
 
 class Track:
@@ -93,7 +119,46 @@ class TargetTracker:
         self.max_distance_match = max_distance_match
         self.track_timeout = track_timeout
         
-    def update(self, distances: list) -> list:
+    def _is_valid_entry(self, distance: float, topology: dict) -> bool:
+        if not topology:
+            return True
+            
+        room_mode = topology.get("room_mode", "perimeter")
+        if room_mode != "perimeter":
+            return True
+            
+        doors = topology.get("doors", [])
+        sensor = topology.get("sensor", {})
+        virtual_zones = topology.get("virtual_entry_zones", [])
+        
+        # Check virtual zones
+        for vz in virtual_zones:
+            if vz.get("min", 0) <= distance <= vz.get("max", 999):
+                return True
+                
+        # Check physical doors/french windows
+        sx = sensor.get("x", 0.0)
+        sy = sensor.get("y", 0.0)
+        for door in doors:
+            # Must be a door or french window
+            if door.get("type") == "window" and not door.get("is_french_window", False):
+                continue
+                
+            dx = door.get("x", 0.0)
+            dy = door.get("y", 0.0)
+            dist_to_door = math.hypot(dx - sx, dy - sy)
+            
+            freq = door.get("usage_frequency", "normal")
+            tolerance = 1.0
+            if freq == "rare": tolerance = 0.5
+            elif freq == "frequent": tolerance = 1.5
+            
+            if abs(distance - dist_to_door) <= tolerance:
+                return True
+                
+        return False
+
+    def update(self, distances: list, topology: dict = None) -> list:
         now = time.time()
         
         # Remove stale tracks
@@ -124,10 +189,14 @@ class TargetTracker:
         # Create new tracks for unmatched distances
         for d in unmatched_distances:
             if len(self.tracks) < self.max_tracks:
-                new_track = Track(self.next_id, d)
-                self.tracks[self.next_id] = new_track
-                active_tracks.append(new_track)
-                self.next_id += 1
+                # Wasp-in-a-Box validation
+                if self._is_valid_entry(d, topology):
+                    new_track = Track(self.next_id, d)
+                    self.tracks[self.next_id] = new_track
+                    active_tracks.append(new_track)
+                    self.next_id += 1
+                else:
+                    print(f"[Wasp-in-a-Box] Rejected ghost target at {d}m (No valid entry zone)")
                 
         return active_tracks
 

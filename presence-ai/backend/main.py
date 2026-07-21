@@ -47,8 +47,11 @@ async def db_ttl_task():
             sensors = get_all_sensors()
             for s in sensors:
                 if s.get('is_enabled'):
-                    logger.info(f"Auto-training ML model for {s['sensor_id']}...")
-                    train_sensor_model(s['sensor_id'])
+                    if s.get('last_calibrated_at') is not None:
+                        logger.info(f"Auto-training ML model for {s['sensor_id']}...")
+                        train_sensor_model(s['sensor_id'])
+                    else:
+                        logger.info(f"Skipping ML auto-training for {s['sensor_id']} (Not Calibrated).")
             
         except Exception as e:
             logger.error(f"TTL cleanup or ML training failed: {e}")
@@ -290,8 +293,22 @@ def on_message(client, userdata, msg):
                 if not distances_in_payload and distance > 0:
                     distances_in_payload.append(distance)
                     
+                topology = {"room_mode": "perimeter"}
+                if room_info:
+                    doors = [d for d in get_doors_windows() if d['room_id'] == room_info['id']]
+                    topology["doors"] = doors
+                
+                if sensor_info:
+                    topology["sensor"] = sensor_info
+                    import json
+                    v_zones = sensor_info.get("virtual_entry_zones")
+                    try:
+                        topology["virtual_entry_zones"] = json.loads(v_zones) if v_zones else []
+                    except:
+                        topology["virtual_entry_zones"] = []
+                    
                 tracker = sensor_trackers[sensor_id]
-                active_tracks = tracker.update(distances_in_payload)
+                active_tracks = tracker.update(distances_in_payload, topology)
                 
                 # 2. Run ML inference on all active tracks
                 is_valid_human = False
@@ -566,6 +583,10 @@ class DoorWindowConfig(BaseModel):
     is_magnetic: bool = False
     sensor_id: str = ""
     rotation: float = 0.0
+    ha_entity_id: str = ""
+    target_room_id: str = ""
+    is_french_window: bool = False
+    usage_frequency: str = "normal"
 
 @app.get("/api/doors")
 async def api_get_doors():
@@ -573,7 +594,11 @@ async def api_get_doors():
 
 @app.post("/api/doors")
 async def api_upsert_door(item: DoorWindowConfig):
-    upsert_door_window(item.id, item.name, item.room_id, item.type, item.x, item.y, item.width, item.is_magnetic, item.sensor_id, item.rotation)
+    upsert_door_window(
+        item.id, item.name, item.room_id, item.type, item.x, item.y, item.width, 
+        item.is_magnetic, item.sensor_id, item.rotation, item.ha_entity_id, 
+        item.target_room_id, item.is_french_window, item.usage_frequency
+    )
     return {"status": "success"}
 
 @app.delete("/api/doors/{item_id}")

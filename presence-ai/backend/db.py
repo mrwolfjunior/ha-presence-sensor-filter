@@ -55,7 +55,8 @@ def init_db():
             heading_angle REAL DEFAULT 0.0,
             max_distance REAL DEFAULT 8.0,
             last_calibrated_at DATETIME,
-            psf_friendly_name TEXT
+            psf_friendly_name TEXT,
+            virtual_entry_zones TEXT
         )
     """)
     
@@ -66,6 +67,11 @@ def init_db():
         pass # Column already exists
     try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN psf_friendly_name TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN virtual_entry_zones TEXT")
     except sqlite3.OperationalError:
         pass
     
@@ -106,7 +112,9 @@ def init_db():
             width REAL DEFAULT 1.0,
             is_magnetic BOOLEAN DEFAULT 0,
             sensor_id TEXT,
-            rotation REAL DEFAULT 0.0
+            rotation REAL DEFAULT 0.0,
+            is_french_window BOOLEAN DEFAULT 0,
+            usage_frequency TEXT DEFAULT 'normal'
         )
     """)
 
@@ -159,6 +167,16 @@ def init_db():
         
     try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN max_distance REAL DEFAULT 8.0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE doors_windows ADD COLUMN is_french_window BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE doors_windows ADD COLUMN usage_frequency TEXT DEFAULT 'normal'")
     except sqlite3.OperationalError:
         pass
 
@@ -320,12 +338,28 @@ def update_sensor_config(sensor_id: str, room_id: str = None, x: float = None, y
                 updates.append("psf_friendly_name = ?")
                 params.append(psf_friendly_name)
                 
-            if not updates:
-                return
+            # If we updated room, x, y, max_distance, or fov, recalculate virtual entry zones
+            should_recalc = any(val is not None for val in (room_id, x, y, max_distance, fov_angle))
+            
+            if updates:
+                query = f"UPDATE sensors SET {', '.join(updates)} WHERE sensor_id = ?"
+                params.append(sensor_id)
+                cursor.execute(query, params)
                 
-            params.append(sensor_id)
-            query = f"UPDATE sensors SET {', '.join(updates)} WHERE sensor_id = ?"
-            cursor.execute(query, params)
+            if should_recalc:
+                cursor.execute("SELECT * FROM sensors WHERE sensor_id = ?", (sensor_id,))
+                s = cursor.fetchone()
+                if s and s['room_id']:
+                    cursor.execute("SELECT * FROM rooms WHERE id = ?", (s['room_id'],))
+                    r = cursor.fetchone()
+                    if r:
+                        from ml_pipeline import calculate_virtual_entry_zones
+                        import json
+                        sensor_dict = dict(s)
+                        room_dict = dict(r)
+                        v_zones = calculate_virtual_entry_zones(sensor_dict, room_dict)
+                        cursor.execute("UPDATE sensors SET virtual_entry_zones = ? WHERE sensor_id = ?", (json.dumps(v_zones), sensor_id))
+                        
             conn.commit()
         finally:
             conn.close()
@@ -382,32 +416,34 @@ def sync_topology(rooms: list, doors: list):
                 
             for d in doors:
                 cursor.execute("""
-                    INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation, ha_entity_id, target_room_id) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation, ha_entity_id, target_room_id, is_french_window, usage_frequency) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET 
                         name=excluded.name, room_id=excluded.room_id, type=excluded.type, 
                         x=excluded.x, y=excluded.y, width=excluded.width, is_magnetic=excluded.is_magnetic, 
                         sensor_id=excluded.sensor_id, rotation=excluded.rotation,
-                        ha_entity_id=excluded.ha_entity_id, target_room_id=excluded.target_room_id
-                """, (d['id'], d['name'], d['room_id'], d['type'], d['x'], d['y'], d['width'], d.get('is_magnetic', False), d.get('sensor_id', ''), d.get('rotation', 0.0), d.get('ha_entity_id', ''), d.get('target_room_id', '')))
+                        ha_entity_id=excluded.ha_entity_id, target_room_id=excluded.target_room_id,
+                        is_french_window=excluded.is_french_window, usage_frequency=excluded.usage_frequency
+                """, (d['id'], d['name'], d['room_id'], d['type'], d['x'], d['y'], d['width'], d.get('is_magnetic', False), d.get('sensor_id', ''), d.get('rotation', 0.0), d.get('ha_entity_id', ''), d.get('target_room_id', ''), d.get('is_french_window', False), d.get('usage_frequency', 'normal')))
                 
             conn.commit()
         finally:
             conn.close()
 
-def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str, rotation: float = 0.0, ha_entity_id: str = "", target_room_id: str = ""):
+def upsert_door_window(item_id: str, name: str, room_id: str, type: str, x: float, y: float, width: float, is_magnetic: bool, sensor_id: str, rotation: float = 0.0, ha_entity_id: str = "", target_room_id: str = "", is_french_window: bool = False, usage_frequency: str = 'normal'):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation, ha_entity_id, target_room_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO doors_windows (id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation, ha_entity_id, target_room_id, is_french_window, usage_frequency)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET 
             name=excluded.name, room_id=excluded.room_id, type=excluded.type,
             x=excluded.x, y=excluded.y, width=excluded.width,
             is_magnetic=excluded.is_magnetic, sensor_id=excluded.sensor_id,
             rotation=excluded.rotation, ha_entity_id=excluded.ha_entity_id,
-            target_room_id=excluded.target_room_id
-    """, (item_id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation))
+            target_room_id=excluded.target_room_id, is_french_window=excluded.is_french_window,
+            usage_frequency=excluded.usage_frequency
+    """, (item_id, name, room_id, type, x, y, width, is_magnetic, sensor_id, rotation, ha_entity_id, target_room_id, is_french_window, usage_frequency))
     conn.commit()
     conn.close()
 

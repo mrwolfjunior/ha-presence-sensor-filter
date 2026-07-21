@@ -3,7 +3,7 @@ import {
   Box, Drawer, Button, Typography, TextField, FormControl, InputLabel, 
   Select, MenuItem, IconButton, Card, CardContent, Switch, List, ListItem, ListItemText, ListItemButton, ListItemIcon, Divider, CssBaseline, ThemeProvider, createTheme, Chip, Paper, Tooltip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Grid, Slider
+  Grid, Slider, Autocomplete, FormControlLabel
 } from '@mui/material';
 import MapIcon from '@mui/icons-material/Map';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -19,6 +19,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import UndoIcon from '@mui/icons-material/Undo';
 import RedoIcon from '@mui/icons-material/Redo';
 import SaveIcon from '@mui/icons-material/Save';
+import AddIcon from '@mui/icons-material/Add';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -597,6 +598,7 @@ function App() {
               <MenuItem value="mattone">Mattone (Default)</MenuItem>
               <MenuItem value="cartongesso">Cartongesso</MenuItem>
               <MenuItem value="cemento">Cemento Armato</MenuItem>
+              <MenuItem value="assente">Assente (Ringhiera)</MenuItem>
             </Select>
           </FormControl>
           
@@ -702,18 +704,93 @@ function App() {
     if (selectedElement.type === 'door' || selectedElement.type === 'window') {
       const door = doors.find(d => d.id === selectedElement.id);
       if(!door) return null;
+      
+      const availableContactSensors = dbSensors.filter(s => s.is_magnetic || s.sensor_id.includes('contact') || s.friendly_name?.toLowerCase().includes('contact'));
+      const contactSensorNames = availableContactSensors.map(s => s.sensor_id);
+      
       return (
          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <Typography variant="h6">{door.type === 'window' ? 'Finestra' : 'Porta'}</Typography>
           <DimensionInput label="Larghezza (m)" value={door.width} onChange={(val) => updateDoorLocal(door.id, {width: val})} />
-          <TextField 
-            label="HA Entity ID" 
-            size="small" 
-            value={door.sensor_id || ''} 
-            onChange={(e) => updateDoorLocal(door.id, {sensor_id: e.target.value})} 
-            placeholder="es. binary_sensor.door_contact"
-          />
-          <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => deleteDoorLocal(door.id)}>Elimina</Button>
+          
+          {door.type === 'window' && (
+            <FormControlLabel 
+              control={<Switch size="small" checked={door.is_french_window || false} onChange={(e) => updateDoorLocal(door.id, {is_french_window: e.target.checked})} />} 
+              label="È una porta finestra" 
+            />
+          )}
+
+          <FormControl size="small" fullWidth>
+            <InputLabel>Frequenza di Passaggio</InputLabel>
+            <Select 
+              value={door.usage_frequency || 'normal'} 
+              label="Frequenza di Passaggio" 
+              onChange={(e) => updateDoorLocal(door.id, {usage_frequency: e.target.value})}
+            >
+              <MenuItem value="rare">Mai / Raramente</MenuItem>
+              <MenuItem value="normal">Normale</MenuItem>
+              <MenuItem value="frequent">Frequente</MenuItem>
+            </Select>
+          </FormControl>
+
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="subtitle2" fontWeight="bold">Associa Sensore Magnetico</Typography>
+          
+          {(() => {
+            const currentSensors = door.sensor_id ? door.sensor_id.split(',') : [];
+            const handleSensorChange = (index, newValue) => {
+              const updated = [...currentSensors];
+              updated[index] = newValue || '';
+              updateDoorLocal(door.id, {sensor_id: updated.join(',')});
+            };
+            const handleRemoveSensor = (index) => {
+              const updated = [...currentSensors];
+              updated.splice(index, 1);
+              updateDoorLocal(door.id, {sensor_id: updated.join(',')});
+            };
+            const handleAddSensor = () => {
+              const updated = [...currentSensors, ''];
+              updateDoorLocal(door.id, {sensor_id: updated.join(',')});
+            };
+            const assignedSensors = new Set(currentSensors);
+            const unassignedSensorNames = contactSensorNames.filter(name => !assignedSensors.has(name));
+
+            return (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {currentSensors.map((sensorValue, idx) => (
+                  <Box key={idx} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Autocomplete
+                      freeSolo
+                      options={unassignedSensorNames}
+                      value={sensorValue || ''}
+                      onChange={(e, newValue) => handleSensorChange(idx, newValue)}
+                      onInputChange={(e, newInputValue) => handleSensorChange(idx, newInputValue)}
+                      sx={{ flexGrow: 1 }}
+                      renderInput={(params) => (
+                        <TextField {...params} label="ID Entità HA (Contatto)" size="small" placeholder="es. binary_sensor.door_contact" />
+                      )}
+                    />
+                    <IconButton size="small" color="error" onClick={() => handleRemoveSensor(idx)}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                ))}
+                <Button 
+                  variant="outlined" 
+                  color="primary"
+                  size="small" 
+                  startIcon={<AddIcon />} 
+                  onClick={handleAddSensor}
+                  disabled={unassignedSensorNames.length === 0}
+                  sx={{ alignSelf: 'flex-start', textTransform: 'none', mt: 1 }}
+                >
+                  Aggiungi sensore contatto
+                </Button>
+              </Box>
+            );
+          })()}
+
+          <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => deleteDoorLocal(door.id)} sx={{ mt: 2 }}>Elimina</Button>
         </Box>
       );
     }

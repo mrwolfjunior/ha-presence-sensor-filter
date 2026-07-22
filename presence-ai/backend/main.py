@@ -172,25 +172,58 @@ async def broadcast_websocket(message: dict):
         except Exception:
             print(f"Subscribed to topic: {MQTT_BASE_TOPIC}/+")
 
-def publish_discovery(sensor_id: str):
+def publish_discovery(sensor_id: str, is_magnetic: bool = False):
     """Publish Home Assistant MQTT Discovery payload for the filtered sensor."""
-    discovery_topic = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/presence_ai_{sensor_id}/config"
+    if is_magnetic:
+        return # Do not publish virtual sensors for simple contact sensors
+
     state_topic = f"presence_ai/sensor/{sensor_id}/state"
     
-    payload = {
-        "name": f"AI Filtered {sensor_id.replace('_', ' ').title()}",
-        "unique_id": f"presence_ai_{sensor_id}",
+    device_info = {
+        "identifiers": [f"presence_ai_{sensor_id}"],
+        "name": f"Presence AI: {sensor_id.replace('_', ' ').title()}",
+        "manufacturer": "Custom AI"
+    }
+
+    # Main Presence Sensor
+    discovery_topic_presence = f"{MQTT_DISCOVERY_PREFIX}/binary_sensor/presence_ai_{sensor_id}/config"
+    payload_presence = {
+        "name": "Presence",
+        "unique_id": f"presence_ai_{sensor_id}_presence",
         "state_topic": state_topic,
-        "device_class": "motion",
+        "value_template": "{{ value_json.presence }}",
+        "device_class": "presence",
         "payload_on": "ON",
         "payload_off": "OFF",
-        "device": {
-            "identifiers": [f"presence_ai_{sensor_id}"],
-            "name": "Presence AI Hub",
-            "manufacturer": "Custom AI"
-        }
+        "device": device_info
     }
-    mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
+    mqtt_client.publish(discovery_topic_presence, json.dumps(payload_presence), retain=True)
+
+    # Illuminance Sensor
+    discovery_topic_illuminance = f"{MQTT_DISCOVERY_PREFIX}/sensor/presence_ai_{sensor_id}_illuminance/config"
+    payload_illuminance = {
+        "name": "Illuminance",
+        "unique_id": f"presence_ai_{sensor_id}_illuminance",
+        "state_topic": state_topic,
+        "value_template": "{{ value_json.illuminance }}",
+        "device_class": "illuminance",
+        "unit_of_measurement": "lx",
+        "device": device_info
+    }
+    mqtt_client.publish(discovery_topic_illuminance, json.dumps(payload_illuminance), retain=True)
+
+    # Battery Sensor
+    discovery_topic_battery = f"{MQTT_DISCOVERY_PREFIX}/sensor/presence_ai_{sensor_id}_battery/config"
+    payload_battery = {
+        "name": "Battery",
+        "unique_id": f"presence_ai_{sensor_id}_battery",
+        "state_topic": state_topic,
+        "value_template": "{{ value_json.battery }}",
+        "device_class": "battery",
+        "unit_of_measurement": "%",
+        "device": device_info
+    }
+    mqtt_client.publish(discovery_topic_battery, json.dumps(payload_battery), retain=True)
 
 def on_connect(client, userdata, flags, reason_code, properties):
     logger.info(f"Connected to MQTT broker with result code {reason_code}")
@@ -212,31 +245,35 @@ def on_message(client, userdata, msg):
                     if not device.get("friendly_name") or device["friendly_name"] == "Coordinator":
                         continue
                     
-                    is_presence_or_magnetic = False
+                    is_presence = False
+                    is_magnetic = False
                     if "exposes" in device.get("definition", {}):
                         # Prepopulate everything that could be a sensor to allow user selection
                         for expose in device["definition"]["exposes"]:
-                            if expose.get("property") in ["presence", "occupancy", "contact"]:
-                                is_presence_or_magnetic = True
-                                break
-                    if is_presence_or_magnetic:
-                        upsert_sensor(device["friendly_name"], is_enabled=False)
+                            if expose.get("property") in ["presence", "occupancy"]:
+                                is_presence = True
+                            if expose.get("property") == "contact":
+                                is_magnetic = True
+                    if is_presence or is_magnetic:
+                        upsert_sensor(device["friendly_name"], is_enabled=False, is_magnetic=is_magnetic)
             return
 
         sensor_id = topic_parts[1]
         
-        # Support multiple keys: 'occupancy' vs 'presence', 'distance' vs 'target_distance'
+        # Support multiple keys: 'occupancy' vs 'presence', 'distance' vs 'target_distance', 'contact'
         has_presence = "presence" in payload or "occupancy" in payload
         has_distance = "target_distance" in payload or "distance" in payload
+        has_contact = "contact" in payload
         
-        if has_presence or has_distance:
+        if has_presence or has_distance or has_contact:
             latest_payloads[sensor_id] = payload
             distance = payload.get("target_distance", payload.get("distance", 0.0))
-            presence = payload.get("presence", payload.get("occupancy", False))
+            presence = payload.get("presence", payload.get("occupancy", not payload.get("contact", True)))
+            is_magnetic = has_contact
             
             # Register sensor if new, do not overwrite settings
             if sensor_id not in known_sensors_cache:
-                upsert_sensor(sensor_id, is_enabled=False)
+                upsert_sensor(sensor_id, is_enabled=False, is_magnetic=is_magnetic)
                 known_sensors_cache.add(sensor_id)
             
             # Broadcast raw data for the settings UI, regardless of enabled status
@@ -320,11 +357,16 @@ def on_message(client, userdata, msg):
                         is_valid_human = True
                         break # Logic OR: one human is enough
             
-            state_topic = f"presence_ai/virtual/psf_{sensor_id}/state"
-            mqtt_client.publish(state_topic, "ON" if is_valid_human else "OFF")
+            state_topic = f"presence_ai/sensor/{sensor_id}/state"
+            state_payload = {
+                "presence": "ON" if is_valid_human else "OFF",
+                "illuminance": payload.get("illuminance"),
+                "battery": payload.get("battery")
+            }
+            mqtt_client.publish(state_topic, json.dumps(state_payload))
             
             # Publish Discovery for enabled sensors
-            publish_discovery(sensor_id)
+            publish_discovery(sensor_id, is_magnetic=is_magnetic)
             
     except Exception as e:
         logger.error(f"Error processing MQTT message: {e}")
@@ -383,9 +425,20 @@ async def calibrate_stop(action: CalibrateAction):
         active_calibrations[sensor_id]['step'] = None
         
         quality = "good" if samples_collected > 10 else "poor"
-        message = f"Raccolti {samples_collected} campioni."
-        if quality == "poor":
-            message += " Pochi dati, considera di ripetere."
+        
+        # If the step is empty_room, getting 0 samples is actually the perfect result
+        # because the sensor shouldn't detect anything when the room is empty.
+        if step == 'empty_room':
+            if samples_collected == 0:
+                quality = "good"
+                message = "Nessun falso positivo rilevato! Stanza vuota confermata."
+            else:
+                quality = "poor"
+                message = f"Rilevati {samples_collected} campioni (falsi positivi) nella stanza vuota."
+        else:
+            message = f"Raccolti {samples_collected} campioni."
+            if quality == "poor":
+                message += " Pochi dati, considera di ripetere."
             
         return {"status": "success", "samples": samples_collected, "quality": quality, "message": message}
     return {"status": "error", "message": "Nessuna registrazione attiva trovata"}
@@ -474,6 +527,17 @@ async def apply_sensor_config(sensor_id: str, request: Request):
     # Cleanup memory
     if sensor_id in active_calibrations:
         del active_calibrations[sensor_id]
+        
+    return {"status": "success"}
+
+@app.post("/api/sensors/{sensor_id}/set_mqtt")
+async def set_sensor_mqtt(sensor_id: str, request: Request):
+    # Sends an MQTT message to update the sensor in Zigbee2MQTT without completing calibration
+    topic = f"{MQTT_BASE_TOPIC}/{sensor_id}/set"
+    payload = await request.json()
+    
+    logger.info(f"Setting MQTT config to {sensor_id} via {topic}: {payload}")
+    mqtt_client.publish(topic, json.dumps(payload))
         
     return {"status": "success"}
 

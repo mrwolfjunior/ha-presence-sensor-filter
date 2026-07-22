@@ -108,6 +108,19 @@ export default function CalibrationWizard({ open, onClose, room, sensor, onCalib
     setIsProcessing(true);
     setStepFeedback(null);
     try {
+      if (activeStep === 0) {
+        // Imposta il sensore su super sensibile per la calibrazione
+        await fetch(`${basePath}/api/sensors/${sensor.sensor_id}/set_mqtt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            "radar_sensitivity": 10,
+            "entry_sensitivity": 10,
+            "fading_time": 1
+          })
+        });
+      }
+
       const res = await fetch(`${basePath}/api/calibrate/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

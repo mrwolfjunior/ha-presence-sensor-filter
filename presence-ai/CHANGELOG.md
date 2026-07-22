@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.0
+- **MQTT Discovery**: Risolto il mapping errato dei sensori di contatto (magnetici), che non vengono più esposti come sensori radar di presenza.
+- **MQTT Discovery**: Integrazione dinamica dei sensori clone per la Batteria e la Luminosità direttamente nel Discovery di Home Assistant.
+- **Calibrazione Automatica**: Settaggio hardware intelligente del radar al massimo della sensibilità (`radar_sensitivity: 10`, `fading_time: 1`) in fase di calibrazione.
+- **UX Calibrazione**: La procedura ora gestisce correttamente lo "Step Stanza Vuota" considerando lo zero assoluto di campionamenti (nessun falso positivo) come esito di successo e ricaricando in automatico lo stato sulla dashboard.
+- **Prefisso MQTT Parametrico**: Corretto il bug per cui i Virtual Sensor venivano ignorati da Home Assistant se si configurava un prefix Discovery diverso dallo standard `homeassistant` nell'Add-on.
 ## 2.3.0
 - **UI/UX**: Risolto il bug "Sensore Sconosciuto" nei dettagli della stanza. Ora l'interfaccia utilizza correttamente il `friendly_name` personalizzato o nativo del dispositivo.
 - **WebSocket/MQTT Realtime**: Aggiunti i dati relativi a batteria (`battery`) e luminosità (`illuminance`) nel payload WebSocket, così da popolare in tempo reale la dashboard React senza bloccarsi su valori "N/D".

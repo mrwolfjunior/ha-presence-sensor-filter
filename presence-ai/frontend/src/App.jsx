@@ -536,8 +536,8 @@ function App() {
   const activeRoomsIds = activeRooms.map(r => r.id);
   const activeDoors = doors.filter(d => activeRoomsIds.includes(d.room_id));
   
-  const mapSensors = dbSensors.filter(s => activeRoomsIds.includes(s.room_id) && s.is_enabled);
-  const unlinkedSensors = dbSensors.filter(s => !s.room_id && s.is_enabled);
+  const mapSensors = dbSensors.filter(s => activeRoomsIds.includes(s.room_id) && s.is_enabled && !s.is_magnetic);
+  const unlinkedSensors = dbSensors.filter(s => !s.room_id && s.is_enabled && !s.is_magnetic);
 
   const renderSidebar = () => {
     if (!selectedElement) return null;
@@ -546,7 +546,7 @@ function App() {
       const room = rooms.find(r => r.id === selectedElement.id);
       if(!room) return null;
       
-      const roomSensors = dbSensors.filter(s => s.room_id === room.id);
+      const roomSensors = dbSensors.filter(s => s.room_id === room.id && !s.is_magnetic);
       
       const isDoorTouchingRoom = (d, r) => {
         if (d.room_id === r.id) return true;
@@ -1251,6 +1251,7 @@ function App() {
           onCalibrationComplete={(sensorId, maxDist, sens) => {
             console.log("Calibration complete:", sensorId, maxDist, sens);
             // Optionally update local sensor state with new params
+            fetchData();
           }}
         />
 

@@ -163,6 +163,11 @@ def init_db():
         pass
         
     try:
+        cursor.execute("ALTER TABLE sensors ADD COLUMN is_magnetic BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
         cursor.execute("ALTER TABLE sensors ADD COLUMN y REAL DEFAULT 0.0")
     except sqlite3.OperationalError:
         pass
@@ -288,17 +293,17 @@ def get_all_sensors():
     conn.close()
     return [dict(row) for row in rows]
 
-def upsert_sensor(sensor_id: str, is_enabled: bool = False):
+def upsert_sensor(sensor_id: str, is_enabled: bool = False, is_magnetic: bool = False):
     with db_lock:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            # Insert if not exists, do not overwrite is_enabled if already exists
+            # Insert if not exists, do not overwrite if already exists
             cursor.execute("""
-                INSERT INTO sensors (sensor_id, is_enabled) 
-                VALUES (?, ?)
+                INSERT INTO sensors (sensor_id, is_enabled, is_magnetic) 
+                VALUES (?, ?, ?)
                 ON CONFLICT(sensor_id) DO NOTHING
-            """, (sensor_id, is_enabled))
+            """, (sensor_id, is_enabled, is_magnetic))
             conn.commit()
         finally:
             conn.close()
